@@ -1,9 +1,8 @@
----
-
 # TLState
 
 A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TLS support to any byte-oriented transport.
-⚠️ **Experimental**: This project is under active development. There are likely bugs, edge-case failures, and (possibly) insecure corner-cases. Use at your own risk.
+
+⚠️ **Experimental**: This project is under active development. There are may be bugs, edge-case failures, and (possibly) insecure corner-cases. Use at your own risk.
 
 ---
 
@@ -21,7 +20,7 @@ A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TL
 ## ⚠️ Status & Caveats
 
 * **In Development**: APIs and internals will change without notice.
-* **First Crypto Project**: This is out first cryptographic project, so there may very well be some nasty hidden bugs.
+* **First Crypto Project**: This is our first cryptographic project, so there may very well be some nasty hidden bugs.
 * **Non-standard Control Flow**: For more performance we make use of some pretty hacky optimizations
 
   * Many functions write into pre-allocated buffers instead of returning values.

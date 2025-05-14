@@ -217,20 +217,24 @@ ciphers:
 		offset += extLen
 	}
 
+	// We no longer need any input from hereon out. Simply re-use this buffer for our output
+	data.Reset()
+
 	if !supportsTLS13 {
+		marshallAlert(AlertLevelFatal, AlertDescriptionProtocolVersion, data)
 		log.Warn().Msg("Client does not support TLS 1.3")
-		return None, ErrTLS13NotSupported
+		return Responded, ErrTLS13NotSupported
 	}
 
 	if !hasKeyShare {
+		// RFC suggest we MAY send a RetryRequest, we won't for now tho
+		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
 		log.Warn().Msg("No valid key share found")
-		return None, ErrNoValidKeyShare
+		return Responded, ErrNoValidKeyShare
 	}
 
 	t.handshakeState = HandshakeStateClientHelloDone
 
-	// We no longer need any input from hereon out. Simply re-use this buffer for our output
-	data.Reset()
 	return t.generateServerResponse(data)
 }
 
@@ -763,12 +767,13 @@ func (t *TLState) calculateApplicationKeys() error {
 }
 
 // We can fail in here but for now silently failing seems like a better option than to bail out.
-func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseState {
+func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseState, error) {
+
 	for {
 
 		buffered := t.incoming.Buffered()
 		if buffered < 5 {
-			return None
+			return None, nil
 		}
 
 		head, tail := t.incoming.Peek(5)
@@ -780,7 +785,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 		length := int(binary.BigEndian.Uint16([]byte{b0, b1}))
 
 		if buffered < 5+length {
-			return None
+			return None, nil
 		}
 
 		headerHead, headerTail := t.incoming.Peek(5)
@@ -827,9 +832,8 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 		if t.clientCipher == nil {
 			aead, err := t.createAEAD(t.clientApplicationKey)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to create AEAD cipher")
 				out.B = out.B[:outLength]
-				continue
+				return None, err
 			}
 			t.clientCipher = aead
 		}
@@ -841,13 +845,8 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 			additionalData,
 		)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Uint64("record_count", t.clientRecordCount-1).
-				Hex("nonce", nonce).
-				Msg("Failed to decrypt application data")
 			out.B = out.B[:outLength]
-			continue
+			return None, err
 		}
 
 		if len(plaintext) == 0 {
@@ -861,12 +860,40 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 		// Fullfilled its temporary use, now write the output by first resetting to original length and then appening
 		out.B = out.B[:outLength]
 
-		if contentType == RecordTypeApplicationData {
-
+		switch contentType {
+		case RecordTypeApplicationData:
 			out.Write(plaintext)
-			return Responded
+			return Responded, nil
+		case RecordTypeAlert:
+
+			alertLength := len(plaintext)
+			if alertLength < 2 {
+				return None, ErrMalformedAlert
+			}
+
+			level := AlertLevel(plaintext[0])
+			description := AlertDescription(plaintext[1])
+
+			log.Warn().
+				Str("Level", level.String()).
+				Str("Description", description.String()).
+				Msg("Alert received")
+
+			// As a special case, we return EOF here to let users know the connection should never be read from again
+			// "This alert notifies the recipient that the sender will not send any more messages on this connection.
+			// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
+			if description == AlertDescriptionCloseNotify {
+				return None, io.EOF
+			}
+
+			// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
+			// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
+			if level == AlertLevelFatal {
+				return None, ErrFatalAlert
+			}
+		default:
+			log.Debug().Uint8("content_type", uint8(contentType)).Msg("Skipping non-application content type")
 		}
-		log.Debug().Uint8("content_type", uint8(contentType)).Msg("Skipping non-application content type")
 	}
 }
 

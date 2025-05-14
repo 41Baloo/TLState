@@ -18,11 +18,15 @@ import (
 
 var (
 	ErrReadDuringHandshake         = errors.New("cannot read application data before completing handshake")
-	ErrTLS13NotSupported           = errors.New("client does not support TLS 1.3")
 	ErrCiphersNotSupported         = errors.New("client does not support our given ciphers")
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
-	ErrNoValidKeyShare             = errors.New("no valid keyshare found in clientHello")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
+
+	ErrTLS13NotSupported = errors.New("client does not support TLS 1.3")        // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
+	ErrNoValidKeyShare   = errors.New("no valid keyshare found in clientHello") // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+
+	ErrMalformedAlert = errors.New("client sent a malformed alert")
+	ErrFatalAlert     = errors.New("client has sent a fatal alert")
 )
 
 type HandshakeState uint8
@@ -205,7 +209,7 @@ func (t *TLState) Read(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 		return None, nil
 	}
 
-	return t.processApplicationData(out), nil
+	return t.processApplicationData(out)
 }
 
 // Write application data into buff. Data in buff will be replaced with encrypted data

@@ -2,7 +2,7 @@
 
 A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TLS support to any byte-oriented transport.
 
-⚠️ **Experimental**: This project is under active development. There are may be bugs, edge-case failures, and (possibly) insecure corner-cases. Use at your own risk.
+⚠️ **Experimental**: This project is under active development. There may be bugs, edge-case failures, and (possibly) insecure corner-cases. Use at your own risk.
 
 ---
 

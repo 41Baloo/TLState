@@ -83,7 +83,12 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to batch a single response
 		resp, err = ctx.state.Read(ctx.buff)
 		if err != nil {
-			return gnet.None
+			if err == io.EOF {
+				log.Println("Client requested to close connection")
+				return gnet.Close
+			}
+			log.Println("Read error", err)
+			return gnet.Close
 		}
 
 		if resp != TLState.Responded {
@@ -113,7 +118,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	case "/":
 		ctx.buff.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\nHello World!"))
 	default:
-		ctx.buff.Write([]byte("HTTP/1.1 404\r\n\r\n"))
+		ctx.buff.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
 
 	err = ctx.state.Write(ctx.buff)

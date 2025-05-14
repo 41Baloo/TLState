@@ -16,11 +16,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) ResponseState {
+func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, error) {
 	for {
 		in.Reset()
 		if t.handshakeState == HandshakeStateDone {
-			return None
+			return None, nil
 		}
 
 		buffered := t.incoming.Buffered()
@@ -53,13 +53,11 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) ResponseState {
 			continue
 
 		case RecordTypeHandshake:
-			resp, _ := t.processHandshakeMessage(in)
-			return resp
+			return t.processHandshakeMessage(in)
 
 		case RecordTypeApplicationData:
 			if t.handshakeState >= HandshakeStateServerHelloDone {
-				t.processEncryptedHandshake(in, rawHeader)
-				return None
+				return None, t.processEncryptedHandshake(in, rawHeader)
 			} else {
 				log.Warn().Int("State", int(t.handshakeState)).Msg("Received unexpected application data during early handshake")
 			}
@@ -69,7 +67,7 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) ResponseState {
 		}
 	}
 
-	return None
+	return None, nil
 }
 
 func (t *TLState) processHandshakeMessage(data *byteBuffer.ByteBuffer) (ResponseState, error) {
@@ -532,7 +530,7 @@ func (t *TLState) processEncryptedHandshake(in *byteBuffer.ByteBuffer, header []
 	plaintext = plaintext[:len(plaintext)-1]
 
 	if contentType == RecordTypeHandshake && len(plaintext) >= 4 && plaintext[0] == byte(HandshakeTypeFinished) {
-		t.processClientFinished(plaintext)
+		return t.processClientFinished(plaintext)
 	}
 
 	log.Warn().
@@ -808,16 +806,22 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 
 		// Instead of just writing the result into the buffer we can temporarily use it to get rid of 1 heap allocated slice
 		// We write recordData into the out buffer temporarily
-		out.Reset()
+
+		// Preserve current length so we can skip back to it
+		outLength := out.Len()
+
+		//out.Reset()
 		out.Write(head)
 		out.Write(tail)
 
 		// This is getting really fucking hacky. Since we know the header is of length 5 and the clientIV is of length 12, we can
 		// just write to out and use windows to the backing slice instead, to avoid 2 heap allocs
 		cipherLength := out.Len()
+		cipherText := out.B[outLength : outLength+cipherLength]
 
 		out.Write(headerHead)
 		out.Write(headerTail)
+		additionalData := out.B[outLength+cipherLength:]
 
 		if recType != RecordTypeApplicationData {
 			log.Debug().Uint8("record_type", uint8(recType)).Msg("Skipping non-application-data record")
@@ -846,8 +850,8 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 		plaintext, err := t.clientCipher.Open(
 			nil,
 			nonce,
-			out.B[:cipherLength],
-			out.B[cipherLength:cipherLength+5],
+			cipherText,
+			additionalData,
 		)
 		if err != nil {
 			log.Error().
@@ -867,8 +871,8 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 
 		if contentType == RecordTypeApplicationData {
 
-			// Fullfilled its temporary use, now write the output
-			out.Reset()
+			// Fullfilled its temporary use, now write the output by first resetting to original length and then appening
+			out.B = out.B[:outLength]
 			out.Write(plaintext)
 			return Responded
 		}

@@ -192,13 +192,13 @@ func (t *TLState) Feed(inOut *byteBuffer.ByteBuffer) (ResponseState, error) {
 	t.incoming.Write(inOut.B)
 
 	if t.handshakeState != HandshakeStateDone {
-		return t.processHandshake(inOut), nil
+		return t.processHandshake(inOut)
 	}
 
 	return None, nil
 }
 
-// Will write to data to "out". Check ResponseState for "Responded" to know if anything was written to the buffer
+// Will append data to "out". Check ResponseState for "Responded" to know if anything was written to the buffer
 func (t *TLState) Read(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 	if t.handshakeState != HandshakeStateDone {
 		log.Debug().Msg("Handshake not completed, cannot read application data")

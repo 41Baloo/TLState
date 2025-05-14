@@ -125,6 +125,23 @@ func (c CipherSuite) ToBytes() []byte {
 	return []byte{byte(c >> 8), byte(c & 0xFF)}
 }
 
+func (c CipherSuite) String() string {
+	switch c {
+	case TLS_AES_128_GCM_SHA256:
+		return "TLS_AES_128_GCM_SHA256"
+	case TLS_AES_256_GCM_SHA384:
+		return "TLS_AES_256_GCM_SHA384"
+	case TLS_CHACHA20_POLY1305_SHA256:
+		return "TLS_CHACHA20_POLY1305_SHA256"
+	case TLS_AES_128_CCM_SHA256:
+		return "TLS_AES_128_CCM_SHA256"
+	case TLS_AES_128_CCM_8_SHA256:
+		return "TLS_AES_128_CCM_8_SHA256"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // https://datatracker.ietf.org/doc/html/rfc8446#section-4.2.3
 /*
 enum {

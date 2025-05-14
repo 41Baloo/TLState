@@ -125,9 +125,9 @@ func handle(c net.Conn, cfg *TLState.Config) {
 
 | Method                                | Signature                | Action                                                      |
 | ------------------------------------- | ------------------------ | ----------------------------------------------------------- |
-| `Feed(inOut *byteBuffer.ByteBuffer)`     | `(ResponseState, error)` | Consume incoming record bytes; may write handshake replies. |
-| `Read(out *byteBuffer.ByteBuffer)`    | `(ResponseState, error)` | Decrypt one application-data record into `out`.             |
-| `Write(inOut *byteBuffer.ByteBuffer)` | `error`                  | Encrypt plaintext in `inOut` → ciphertext in same buffer.   |
+| `Feed(inOut *byteBuffer.ByteBuffer)`     | `(ResponseState, error)` | Consumes incoming record bytes; may write handshake replies. |
+| `Read(out *byteBuffer.ByteBuffer)`    | `(ResponseState, error)` | Decrypts and appends one application-data record into `out`.             |
+| `Write(inOut *byteBuffer.ByteBuffer)` | `error`                  | Encrypts plaintext in `inOut` → ciphertext in same buffer.   |
 
 * **Buffers** are from `github.com/valyala/bytebufferpool` and reused intensively.
 * Check each call’s `ResponseState` to know if you must send `buffer.B` back over the wire.

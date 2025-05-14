@@ -74,7 +74,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	ctx.buff.Reset()
 
 	for {
-		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to patch a single response
+		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to batch a single response
 		resp, err = ctx.state.Read(ctx.buff)
 		if err != nil {
 			return gnet.None

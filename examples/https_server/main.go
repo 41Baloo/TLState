@@ -33,6 +33,7 @@ func (s *HTTPServer) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
 
 	state, err := TLState.Get()
 	if err != nil {
+		log.Println("Failed to Get state", err)
 		return nil, gnet.Close
 	}
 
@@ -63,6 +64,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	resp, err := ctx.state.Feed(ctx.buff)
 	if err != nil {
+		log.Println("Failed to feed", err)
 		return gnet.Close
 	}
 
@@ -99,8 +101,10 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		if err == io.ErrUnexpectedEOF {
 			return gnet.None
 		}
+		log.Println("Failed to Read Request", err)
 		return gnet.Close
 	}
+
 	ctx.buff.Reset()
 
 	log.Printf("%s is requesting '%s' with useragent '%s'", c.RemoteAddr(), req.URL.Path, req.Header.Get("User-Agent"))
@@ -114,6 +118,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {
+		log.Println("Failed to write", err)
 		return gnet.Close
 	}
 

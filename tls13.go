@@ -103,12 +103,10 @@ func (t *TLState) processClientHello(data *byteBuffer.ByteBuffer) (ResponseState
 		return None, nil
 	}
 
-	// Extract client version (will be ignored in TLS 1.3)
-	// clientVersion := binary.BigEndian.Uint16(data.B[0:2])
-
+	// clientVersion := binary.BigEndian.Uint16(data.B[0:2]) // ignored in TLS1.3
 	copy(t.clientRandom, data.B[2:34])
 
-	// Extract session ID
+	// SessionID
 	sessionIDLength := int(data.B[34])
 	if dataLen < 35+sessionIDLength {
 		return None, nil
@@ -125,46 +123,45 @@ func (t *TLState) processClientHello(data *byteBuffer.ByteBuffer) (ResponseState
 		return None, nil
 	}
 
+	// Pick from our supported ciphers, this allows our config to specify a preference but fallback on the other, in case
+	// the client doesnt support our prefered choice
 ciphers:
-	for _, sCipher := range t.Config.Ciphers {
-		for i := 0; i < cipherSuitesLength && t.cipher == 0; i += 2 {
-			if offset+i+1 >= dataLen {
-				continue
-			}
+	for _, want := range t.Config.Ciphers {
+		for i := 0; i+1 < cipherSuitesLength; i += 2 {
 			suite := CipherSuite(binary.BigEndian.Uint16(data.B[offset+i : offset+i+2]))
-			if suite == sCipher {
+			if suite == want {
 				t.cipher = suite
 				break ciphers
 			}
 		}
 	}
-
 	if t.cipher == 0 {
 		return None, ErrCiphersNotSupported
 	}
-
-	// Move past cipher suites and compression methods to extensions
 	offset += cipherSuitesLength
+
+	// CompressionMethods
 	if dataLen < offset+1 {
 		return None, nil
 	}
-	compressMethodsLength := int(data.B[offset])
-	offset += 1 + compressMethodsLength
-
+	cmLen := int(data.B[offset])
+	offset += 1 + cmLen
 	if dataLen < offset+2 {
 		return None, nil
 	}
-	extensionsLength := int(binary.BigEndian.Uint16(data.B[offset : offset+2]))
+
+	// Extensions
+	extTotalLen := int(binary.BigEndian.Uint16(data.B[offset : offset+2]))
 	offset += 2
-	if dataLen < offset+extensionsLength {
+	if dataLen < offset+extTotalLen {
 		return None, nil
 	}
+	extEnd := offset + extTotalLen
 
-	extensionsEnd := offset + extensionsLength
-	supportsTLS13 := false
-	hasKeyShare := false
+	var supportsTLS13, hasKeyShare bool
 
-	for offset < extensionsEnd {
+	for offset < extEnd {
+		// need at least 4 bytes for type+length
 		if offset+4 > dataLen {
 			break
 		}
@@ -175,61 +172,49 @@ ciphers:
 		if offset+extLen > dataLen {
 			break
 		}
+		extData := data.B[offset : offset+extLen]
 
-		if extType == ExtensionKeyShare {
-			if extLen < 2 {
-				offset += extLen
-				continue
-			}
-
-			keyShareDataLen := int(binary.BigEndian.Uint16(data.B[offset : offset+2]))
-			offset += 2
-			keyShareEnd := offset + keyShareDataLen
-
-			for offset < keyShareEnd {
-				if offset+4 > dataLen {
-					break
-				}
-				group := NamedGroup(binary.BigEndian.Uint16(data.B[offset : offset+2]))
-				keyLen := int(binary.BigEndian.Uint16(data.B[offset+2 : offset+4]))
-				offset += 4
-
-				if offset+keyLen > dataLen {
-					break
-				}
-
-				if group == NamedGroupX25519 {
-					t.peerPublicKey = append(t.peerPublicKey, data.B[offset:offset+keyLen]...)
-					hasKeyShare = true
-					break
-				}
-
-				offset += keyLen
-			}
-
-			// Instantly skip to next extension
-			offset = extensionsEnd - extLen + keyShareDataLen
-		} else if extType == ExtensionSupportedVersions {
-			// Check for TLS 1.3 support
-			if extLen >= 2 {
-				versionsLen := int(data.B[offset])
-				if versionsLen+1 <= extLen {
-					for i := 0; i < versionsLen; i += 2 {
-						if offset+1+i+1 < dataLen {
-							version := binary.BigEndian.Uint16(data.B[offset+1+i : offset+1+i+2])
-
-							if version == TLS13Version {
-								supportsTLS13 = true
-								break
-							}
+		switch extType {
+		case ExtensionSupportedVersions:
+			// extData[0] = length in bytes of the versions list
+			if len(extData) >= 1 {
+				listLen := int(extData[0])
+				if listLen%2 == 0 && 1+listLen <= len(extData) {
+					for i := 0; i < listLen; i += 2 {
+						ver := binary.BigEndian.Uint16(extData[1+i : 1+i+2])
+						if ver == TLS13Version {
+							supportsTLS13 = true
+							break
 						}
 					}
 				}
 			}
-			offset += extLen
-		} else {
-			offset += extLen
+
+		case ExtensionKeyShare:
+			// extData[0:2] = total length of all keyshares
+			if len(extData) >= 2 {
+				ksLen := int(binary.BigEndian.Uint16(extData[0:2]))
+				pos := 2
+				for pos+4 <= 2+ksLen && pos+4 <= len(extData) {
+					group := NamedGroup(binary.BigEndian.Uint16(extData[pos : pos+2]))
+					keyLen := int(binary.BigEndian.Uint16(extData[pos+2 : pos+4]))
+					pos += 4
+					if pos+keyLen > len(extData) {
+						break
+					}
+					if group == NamedGroupX25519 {
+						t.peerPublicKey = append(t.peerPublicKey, extData[pos:pos+keyLen]...)
+						hasKeyShare = true
+						break
+					}
+					pos += keyLen
+				}
+			}
+
+		default:
+			// ignore other extensions for now
 		}
+		offset += extLen
 	}
 
 	if !supportsTLS13 {
@@ -825,6 +810,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 
 		if recType != RecordTypeApplicationData {
 			log.Debug().Uint8("record_type", uint8(recType)).Msg("Skipping non-application-data record")
+			out.B = out.B[:outLength]
 			continue
 		}
 
@@ -842,6 +828,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 			aead, err := t.createAEAD(t.clientApplicationKey)
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to create AEAD cipher")
+				out.B = out.B[:outLength]
 				continue
 			}
 			t.clientCipher = aead
@@ -859,20 +846,23 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) ResponseSta
 				Uint64("record_count", t.clientRecordCount-1).
 				Hex("nonce", nonce).
 				Msg("Failed to decrypt application data")
+			out.B = out.B[:outLength]
 			continue
 		}
 
 		if len(plaintext) == 0 {
 			log.Warn().Msg("Empty plaintext after decryption")
+			out.B = out.B[:outLength]
 			continue
 		}
 		contentType := RecordType(plaintext[len(plaintext)-1])
 		plaintext = plaintext[:len(plaintext)-1]
 
+		// Fullfilled its temporary use, now write the output by first resetting to original length and then appening
+		out.B = out.B[:outLength]
+
 		if contentType == RecordTypeApplicationData {
 
-			// Fullfilled its temporary use, now write the output by first resetting to original length and then appening
-			out.B = out.B[:outLength]
 			out.Write(plaintext)
 			return Responded
 		}

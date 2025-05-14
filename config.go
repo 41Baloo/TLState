@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"golang.org/x/crypto/curve25519"
 )
@@ -44,13 +45,13 @@ func ConfigFromFile(cert, key string) (*Config, error) {
 	}
 
 	certBlock, _ := pem.Decode(certPEM)
-	if certBlock == nil || certBlock.Type != "CERTIFICATE" {
+	if certBlock == nil || !strings.HasSuffix(certBlock.Type, "CERTIFICATE") {
 		return nil, ErrFailedDecodePemCert
 	}
 	certDER := certBlock.Bytes
 
 	keyBlock, _ := pem.Decode(keyPEM)
-	if keyBlock == nil || keyBlock.Type != "RSA PRIVATE KEY" {
+	if keyBlock == nil || !strings.HasSuffix(keyBlock.Type, "PRIVATE KEY") {
 		return nil, ErrFailedDecodePemKey
 	}
 	keyDER := keyBlock.Bytes
@@ -75,9 +76,18 @@ func ConfigFromDER(serverCert, serverKey []byte) (*Config, error) {
 		return nil, err
 	}
 
-	key, err := x509.ParsePKCS1PrivateKey(serverKey)
-	if err != nil {
-		return nil, err
+	// try PKCS#1, then PKCS#8, just for compatibility
+	var key *rsa.PrivateKey
+	if k1, err := x509.ParsePKCS1PrivateKey(serverKey); err == nil {
+		key = k1
+	} else if k8, err2 := x509.ParsePKCS8PrivateKey(serverKey); err2 == nil {
+		rk, ok := k8.(*rsa.PrivateKey)
+		if !ok {
+			return nil, ErrFailedDecodePemKey
+		}
+		key = rk
+	} else {
+		return nil, ErrFailedDecodePemKey
 	}
 
 	config := Config{

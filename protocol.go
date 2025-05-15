@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 
 	"github.com/41Baloo/TLState/byteBuffer"
-	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -458,7 +457,7 @@ func BuildRecordMessage(recType RecordType, inOut *byteBuffer.ByteBuffer) Respon
 	return Responded
 }
 
-func (t *TLState) BuildEncryptedHandshakeMessage(msgType HandshakeType, inOut *byteBuffer.ByteBuffer) ResponseState {
+func (t *TLState) BuildEncryptedHandshakeMessage(msgType HandshakeType, inOut *byteBuffer.ByteBuffer) (ResponseState, error) {
 
 	marshallHandshake(msgType, inOut)
 
@@ -484,18 +483,21 @@ func (t *TLState) BuildEncryptedHandshakeMessage(msgType HandshakeType, inOut *b
 	}
 	t.serverRecordCount++
 
-	aead, err := t.createAEAD(t.serverHandshakeKey)
-	if err != nil { // TODO: get rid of silent failure
-		log.Error().Err(err).Msg("Failed to create AEAD cipher")
-		return None
+	if t.handshakeCipher == nil {
+		aead, err := t.createAEAD(t.serverHandshakeKey)
+		if err != nil {
+			return None, err
+		}
+
+		t.handshakeCipher = aead
 	}
 
-	ciphertext := aead.Seal(nil, nonce, inOut.B[:messageLength], additionalData)
+	ciphertext := t.handshakeCipher.Seal(nil, nonce, inOut.B[:messageLength], additionalData)
 
 	// No longer need the input, time to replace it with the output.
 	inOut.Reset()
 	inOut.Write(additionalData)
 	inOut.Write(ciphertext)
 
-	return Responded
+	return Responded, nil
 }

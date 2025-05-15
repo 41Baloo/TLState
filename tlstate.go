@@ -82,9 +82,11 @@ type TLState struct {
 
 	handshakeState HandshakeState
 
-	cipher       CipherSuite
-	clientCipher cipher.AEAD
-	serverCipher cipher.AEAD
+	cipher CipherSuite
+
+	handshakeCipher cipher.AEAD
+	clientCipher    cipher.AEAD
+	serverCipher    cipher.AEAD
 
 	clientRandom []byte
 	sessionID    []byte
@@ -173,6 +175,7 @@ func Put(t *TLState) {
 	t.cipher = 0
 	t.serverCipher = nil
 	t.clientCipher = nil
+	t.handshakeCipher = nil
 
 	t.Config = nil
 

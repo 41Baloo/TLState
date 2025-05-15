@@ -254,8 +254,14 @@ func (t *TLState) generateServerResponse(out *byteBuffer.ByteBuffer) (ResponseSt
 	}
 
 	t.generateChangeCipherSpec(out)
-	t.generateEncryptedExtensionsRecord(out)
-	t.generateCertificateRecord(out)
+	resp, err = t.generateEncryptedExtensionsRecord(out)
+	if err != nil {
+		return resp, err
+	}
+	resp, err = t.generateCertificateRecord(out)
+	if err != nil {
+		return resp, err
+	}
 	resp, err = t.generateCertificateVerifyRecord(out)
 	if err != nil {
 		return resp, err
@@ -347,38 +353,46 @@ func (t *TLState) generateChangeCipherSpec(out *byteBuffer.ByteBuffer) ResponseS
 	return resp
 }
 
-func (t *TLState) generateEncryptedExtensionsRecord(out *byteBuffer.ByteBuffer) ResponseState {
+func (t *TLState) generateEncryptedExtensionsRecord(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 
 	buff := byteBuffer.Get()
 	buff.Write([]byte{
 		0x00, 0x00, // We don't support any extensions
 	})
 
-	resp := t.BuildEncryptedHandshakeMessage(HandshakeTypeEncryptedExtensions, buff)
+	resp, err := t.BuildEncryptedHandshakeMessage(HandshakeTypeEncryptedExtensions, buff)
+	if err != nil {
+		byteBuffer.Put(buff)
+		return resp, err
+	}
 	if resp == Responded {
 		out.Write(buff.B)
 	}
 
 	byteBuffer.Put(buff)
 
-	return resp
+	return resp, nil
 }
 
-func (t *TLState) generateCertificateRecord(out *byteBuffer.ByteBuffer) ResponseState {
+func (t *TLState) generateCertificateRecord(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 
 	buff := byteBuffer.Get()
 
 	// CertificateRecord doesn't change from connection to connection (i think), so we just precalculate it in our config
 	buff.Write(t.Config.CertificateRecord)
 
-	resp := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificate, buff)
+	resp, err := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificate, buff)
+	if err != nil {
+		byteBuffer.Put(buff)
+		return resp, err
+	}
 	if resp == Responded {
 		out.Write(buff.B)
 	}
 
 	byteBuffer.Put(buff)
 
-	return resp
+	return resp, nil
 }
 
 func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (ResponseState, error) {
@@ -436,7 +450,11 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 
 	out.B = out.B[:outLength]
 
-	resp := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificateVerify, buff)
+	resp, err := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificateVerify, buff)
+	if err != nil {
+		byteBuffer.Put(buff)
+		return resp, err
+	}
 	if resp == Responded {
 		out.Write(buff.B)
 	}
@@ -455,7 +473,11 @@ func (t *TLState) generateFinishedRecord(out *byteBuffer.ByteBuffer) (ResponseSt
 		return resp, err
 	}
 
-	resp = t.BuildEncryptedHandshakeMessage(HandshakeTypeFinished, buff)
+	resp, err = t.BuildEncryptedHandshakeMessage(HandshakeTypeFinished, buff)
+	if err != nil {
+		byteBuffer.Put(buff)
+		return resp, err
+	}
 	if resp == Responded {
 		out.Write(buff.B)
 	}
@@ -800,7 +822,6 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 		// Preserve current length so we can skip back to it
 		outLength := out.Len()
 
-		//out.Reset()
 		out.Write(head)
 		out.Write(tail)
 

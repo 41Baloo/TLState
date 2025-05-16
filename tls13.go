@@ -828,11 +828,11 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 		// This is getting really fucking hacky. Since we know the header is of length 5 and the clientIV is of length 12, we can
 		// just write to out and use windows to the backing slice instead, to avoid 2 heap allocs
 		cipherLength := out.Len()
-		cipherText := out.B[outLength : outLength+cipherLength]
+		cipherText := out.B[outLength:cipherLength]
 
 		out.Write(headerHead)
 		out.Write(headerTail)
-		additionalData := out.B[outLength+cipherLength:]
+		additionalData := out.B[cipherLength:]
 
 		if recType != RecordTypeApplicationData {
 			log.Debug().Uint8("record_type", uint8(recType)).Msg("Skipping non-application-data record")
@@ -949,6 +949,8 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 		t.serverCipher = aead
 	}
 
+	// We can potentially pass buff into dst aswell, to completely get rid of heap allocs
+	// however this will be extremely hacky. Will have to try & benchmark
 	ciphertext := t.serverCipher.Seal(
 		nil,
 		nonce,

@@ -36,7 +36,7 @@ func handle(c net.Conn, cfg *TLState.Config) {
 	defer byteBuffer.Put(buf)
 
 	// 4. Loop: read → Feed() → send handshake/data → Read()/Write()
-	tmp := make([]byte, 1024)
+	tmp := make([]byte, 64*1024)
 	for {
 		n, err := c.Read(tmp)
 		if err != nil {
@@ -57,13 +57,16 @@ func handle(c net.Conn, cfg *TLState.Config) {
 				if resp != TLState.Responded {
 					break
 				}
+			}
+
+			if buf.Len() > 0 {
 				// buf.B now contains plaintext application data
 				log.Printf("%s => %s", c.RemoteAddr(), buf)
 				// …echo back encrypted
 				state.Write(buf)
 				c.Write(buf.B)
-				buf.Reset()
 			}
+			buf.Reset()
 		}
 	}
 }

@@ -949,10 +949,14 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 		t.serverCipher = aead
 	}
 
-	// We can potentially pass buff into dst aswell, to completely get rid of heap allocs
-	// however this will be extremely hacky. Will have to try & benchmark
+	// This is our final input length. .Seal will write the ciphertext into the remaining space of our buffer and if needed, expand it.
+	// This saves us having to use a second buffer and should also fully eliminate heap allocations caused by .Seal
+	fLength := buff.Len()
+	// We want at least current length + data length + overhead, so .Seal never has to allocate
+	buff.B = EnsureLen(buff.B, fLength+dataLength+t.serverCipher.Overhead())
+
 	ciphertext := t.serverCipher.Seal(
-		nil,
+		buff.B[fLength:fLength],
 		nonce,
 		buff.B[:dataLength],
 		additionalData,
@@ -964,6 +968,9 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 	// automatically pushes everything to heap since it's an interface
 	buff.Reset()
 
+	// TODO: write additionalData first into the buffer, so we don't have to write it in here again
+	// potentially it might even be possible to skip the ciphertext length, so .Seal writes the ciphertext
+	// directly to where we want it, so we would only have to set the length.
 	buff.Write(additionalData)
 	buff.Write(ciphertext)
 

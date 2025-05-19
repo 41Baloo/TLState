@@ -62,6 +62,12 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 				log.Warn().Int("State", int(t.handshakeState)).Msg("Received unexpected application data during early handshake")
 			}
 
+		case RecordTypeAlert:
+			err := handleAlert(in.B)
+			if err != nil {
+				return None, err
+			}
+
 		default:
 			log.Warn().Uint8("record_type", uint8(recType)).Msg("Unknown record type")
 		}
@@ -546,35 +552,13 @@ func (t *TLState) processEncryptedHandshake(in *byteBuffer.ByteBuffer, header []
 			return t.processClientFinished(plaintext)
 		}
 	case RecordTypeAlert:
-		if len(plaintext) < 2 {
-			return ErrMalformedAlert
-		}
-
-		level := AlertLevel(plaintext[0])
-		description := AlertDescription(plaintext[1])
-
+		return handleAlert(plaintext)
+	default:
 		log.Warn().
-			Str("Level", level.String()).
-			Str("Description", description.String()).
-			Msg("Alert received")
-
-		if description == AlertDescriptionCloseNotify {
-			return io.EOF
-		}
-
-		if level == AlertLevelFatal {
-			return ErrFatalAlert
-		}
+			Uint8("content_type", uint8(contentType)).
+			Uint8("first_byte", plaintext[0]).
+			Msg("Not a Finished message")
 	}
-
-	if contentType == RecordTypeHandshake && len(plaintext) >= 4 && plaintext[0] == byte(HandshakeTypeFinished) {
-		return t.processClientFinished(plaintext)
-	}
-
-	log.Warn().
-		Uint8("content_type", uint8(contentType)).
-		Uint8("first_byte", plaintext[0]).
-		Msg("Not a Finished message")
 
 	return nil
 }
@@ -917,31 +901,9 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 			out.Write(plaintext)
 			return Responded, nil
 		case RecordTypeAlert:
-
-			alertLength := len(plaintext)
-			if alertLength < 2 {
-				return None, ErrMalformedAlert
-			}
-
-			level := AlertLevel(plaintext[0])
-			description := AlertDescription(plaintext[1])
-
-			log.Warn().
-				Str("Level", level.String()).
-				Str("Description", description.String()).
-				Msg("Alert received")
-
-			// As a special case, we return EOF here to let users know the connection should never be read from again
-			// "This alert notifies the recipient that the sender will not send any more messages on this connection.
-			// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
-			if description == AlertDescriptionCloseNotify {
-				return None, io.EOF
-			}
-
-			// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
-			// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
-			if level == AlertLevelFatal {
-				return None, ErrFatalAlert
+			err = handleAlert(plaintext)
+			if err != nil {
+				return None, err
 			}
 		default:
 			log.Debug().Uint8("content_type", uint8(contentType)).Msg("Skipping non-application content type")

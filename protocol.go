@@ -2,8 +2,10 @@ package TLState
 
 import (
 	"encoding/binary"
+	"io"
 
 	"github.com/41Baloo/TLState/byteBuffer"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -405,6 +407,35 @@ func (a AlertDescription) String() string {
 	default:
 		return "Invalid Description"
 	}
+}
+
+func handleAlert(in []byte) error {
+	if len(in) < 2 {
+		return ErrMalformedAlert
+	}
+
+	level := AlertLevel(in[0])
+	description := AlertDescription(in[1])
+
+	log.Warn().
+		Str("Level", level.String()).
+		Str("Description", description.String()).
+		Msg("Alert received")
+
+	// As a special case, we return EOF here to let users know the connection should never be read from again
+	// "This alert notifies the recipient that the sender will not send any more messages on this connection.
+	// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
+	if description == AlertDescriptionCloseNotify {
+		return io.EOF
+	}
+
+	// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
+	// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
+	if level == AlertLevelFatal {
+		return ErrFatalAlert
+	}
+
+	return nil
 }
 
 func marshallAlert(level AlertLevel, desc AlertDescription, out *byteBuffer.ByteBuffer) ResponseState {

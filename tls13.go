@@ -540,6 +540,33 @@ func (t *TLState) processEncryptedHandshake(in *byteBuffer.ByteBuffer, header []
 	contentType := RecordType(plaintext[len(plaintext)-1])
 	plaintext = plaintext[:len(plaintext)-1]
 
+	switch contentType {
+	case RecordTypeHandshake:
+		if len(plaintext) >= 4 && plaintext[0] == byte(HandshakeTypeFinished) {
+			return t.processClientFinished(plaintext)
+		}
+	case RecordTypeAlert:
+		if len(plaintext) < 2 {
+			return ErrMalformedAlert
+		}
+
+		level := AlertLevel(plaintext[0])
+		description := AlertDescription(plaintext[1])
+
+		log.Warn().
+			Str("Level", level.String()).
+			Str("Description", description.String()).
+			Msg("Alert received")
+
+		if description == AlertDescriptionCloseNotify {
+			return io.EOF
+		}
+
+		if level == AlertLevelFatal {
+			return ErrFatalAlert
+		}
+	}
+
 	if contentType == RecordTypeHandshake && len(plaintext) >= 4 && plaintext[0] == byte(HandshakeTypeFinished) {
 		return t.processClientFinished(plaintext)
 	}

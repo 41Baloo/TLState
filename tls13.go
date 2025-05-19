@@ -859,8 +859,12 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 			t.clientCipher = aead
 		}
 
+		// See tls13.go:encryptApplicationData to understand this hack better
+		fLength := out.Len()
+		out.B = EnsureLen(out.B, fLength+cipherLength+t.handshakeCipher.Overhead())
+
 		plaintext, err := t.clientCipher.Open(
-			nil,
+			out.B[fLength:fLength],
 			nonce,
 			cipherText,
 			additionalData,
@@ -968,9 +972,8 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 	// automatically pushes everything to heap since it's an interface
 	buff.Reset()
 
-	// TODO: write additionalData first into the buffer, so we don't have to write it in here again
-	// potentially it might even be possible to skip the ciphertext length, so .Seal writes the ciphertext
-	// directly to where we want it, so we would only have to set the length.
+	// Sadly if we were to cut the plaintext from the start, we would loose len(plaintext) capacity from our buffer
+	// benchmarking makes it appear as if this is not a worthy traitoff, so we instead write additionalData to the buffer twice.
 	buff.Write(additionalData)
 	buff.Write(ciphertext)
 

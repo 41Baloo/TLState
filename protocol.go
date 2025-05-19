@@ -492,7 +492,11 @@ func (t *TLState) BuildEncryptedHandshakeMessage(msgType HandshakeType, inOut *b
 		t.handshakeCipher = aead
 	}
 
-	ciphertext := t.handshakeCipher.Seal(nil, nonce, inOut.B[:messageLength], additionalData)
+	// See tls13.go:encryptApplicationData to understand this hack better
+	fLength := inOut.Len()
+	inOut.B = EnsureLen(inOut.B, fLength+messageLength+t.handshakeCipher.Overhead())
+
+	ciphertext := t.handshakeCipher.Seal(inOut.B[fLength:fLength], nonce, inOut.B[:messageLength], additionalData)
 
 	// No longer need the input, time to replace it with the output.
 	inOut.Reset()

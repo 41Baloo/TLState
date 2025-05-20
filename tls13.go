@@ -133,7 +133,7 @@ func (t *TLState) processClientHello(data *byteBuffer.ByteBuffer) (ResponseState
 	// Pick from our supported ciphers, this allows our config to specify a preference but fallback on the other, in case
 	// the client doesnt support our prefered choice
 ciphers:
-	for _, want := range t.Config.Ciphers {
+	for _, want := range t.config.ciphers {
 		for i := 0; i+1 < cipherSuitesLength; i += 2 {
 			suite := CipherSuite(binary.BigEndian.Uint16(data.B[offset+i : offset+i+2]))
 			if suite == want {
@@ -143,7 +143,9 @@ ciphers:
 		}
 	}
 	if t.cipher == 0 {
-		return None, ErrCiphersNotSupported
+		data.Reset()
+		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
+		return Responded, ErrCiphersNotSupported
 	}
 	offset += cipherSuitesLength
 
@@ -216,6 +218,30 @@ ciphers:
 					}
 					pos += keyLen
 				}
+			}
+
+		case ExtensionSignatureAlgorithms:
+			if len(extData) >= 2 {
+				sigAlgsLen := int(binary.BigEndian.Uint16(extData[0:2]))
+
+			signatures:
+				for _, want := range t.config.signatureSchemes {
+					pos := 2
+					for pos+2 <= 2+sigAlgsLen && pos+2 <= len(extData) {
+						scheme := SignatureScheme(binary.BigEndian.Uint16(extData[pos : pos+2]))
+						if scheme == want {
+							t.scheme = scheme
+							break signatures
+						}
+						pos += 2
+					}
+				}
+			}
+
+			if t.scheme == 0 {
+				data.Reset()
+				marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
+				return Responded, ErrNoValidKeyShare
 			}
 
 		default:
@@ -386,7 +412,7 @@ func (t *TLState) generateCertificateRecord(out *byteBuffer.ByteBuffer) (Respons
 	buff := byteBuffer.Get()
 
 	// CertificateRecord doesn't change from connection to connection (i think), so we just precalculate it in our config
-	buff.Write(t.Config.CertificateRecord)
+	buff.Write(t.config.certificateRecord)
 
 	resp, err := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificate, buff)
 	if err != nil {
@@ -423,9 +449,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	buf[64+contextLen] = 0x00
 	copy(buf[64+contextLen+1:], transcriptHash[:])
 
-	sigScheme := t.Config.SignatureScheme
-
-	sHash := sigScheme.GetHash()
+	sHash := t.scheme.GetHash()
 
 	var toSign []byte
 	switch sHash {
@@ -447,7 +471,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	out.Write(toSign[:])
 
 	var options crypto.SignerOpts
-	if sigScheme.IsRSAPSS() { // For RSA we need to specify PSS
+	if t.scheme.IsRSAPSS() { // For RSA we need to specify PSS
 		options = &rsa.PSSOptions{
 			SaltLength: rsa.PSSSaltLengthEqualsHash,
 			Hash:       sHash,
@@ -456,7 +480,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 		options = sHash
 	}
 
-	signature, err := t.Config.ParsedKey.Sign(rand.Reader, out.B[outLength:], options)
+	signature, err := t.config.parsedKey.Sign(rand.Reader, out.B[outLength:], options)
 	if err != nil {
 		return None, err
 	}
@@ -465,7 +489,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	out.B = EnsureLen(out.B, outLength+2+2+len(signature))
 	signatureBytes := out.B[outLength:]
 
-	signatureScheme := sigScheme.ToBytesConst()
+	signatureScheme := t.scheme.ToBytesConst()
 
 	copy(signatureBytes[0:2], signatureScheme)
 

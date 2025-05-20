@@ -309,8 +309,9 @@ enum {
 type Extension uint8
 
 const (
-	ExtensionSupportedVersions Extension = 43
-	ExtensionKeyShare          Extension = 51
+	ExtensionSignatureAlgorithms Extension = 13
+	ExtensionSupportedVersions  Extension = 43
+	ExtensionKeyShare           Extension = 51
 )
 
 // https://datatracker.ietf.org/doc/html/rfc8446#section-4.2

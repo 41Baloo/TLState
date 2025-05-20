@@ -18,12 +18,13 @@ import (
 
 var (
 	ErrReadDuringHandshake         = errors.New("cannot read application data before completing handshake")
-	ErrCiphersNotSupported         = errors.New("client does not support our given ciphers")
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
 
-	ErrTLS13NotSupported = errors.New("client does not support TLS 1.3")        // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
-	ErrNoValidKeyShare   = errors.New("no valid keyshare found in clientHello") // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrTLS13NotSupported   = errors.New("client does not support TLS 1.3")           // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
+	ErrNoValidKeyShare     = errors.New("no valid keyshare found in clientHello")    // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrCiphersNotSupported = errors.New("client does not support our given ciphers") // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrSchemesNotSupported = errors.New("client does not support our signature(s)")  // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 
 	ErrMalformedAlert = errors.New("client sent a malformed alert")
 	ErrFatalAlert     = errors.New("client has sent a fatal alert")
@@ -52,7 +53,7 @@ const (
 
 // Represents the state of a TLS 1.3 connection
 type TLState struct {
-	Config *Config
+	config *Config
 
 	incoming          *ringBuffer.RingBuffer
 	handshakeMessages *byteBuffer.ByteBuffer
@@ -83,6 +84,7 @@ type TLState struct {
 	handshakeState HandshakeState
 
 	cipher CipherSuite
+	scheme SignatureScheme
 
 	handshakeCipher cipher.AEAD
 	clientCipher    cipher.AEAD
@@ -173,17 +175,19 @@ func Put(t *TLState) {
 	t.clientRecordCount = 0
 
 	t.cipher = 0
+	t.scheme = 0
+
 	t.serverCipher = nil
 	t.clientCipher = nil
 	t.handshakeCipher = nil
 
-	t.Config = nil
+	t.config = nil
 
 	pool.Put(t)
 }
 
 func (t *TLState) SetConfig(config *Config) {
-	t.Config = config
+	t.config = config
 }
 
 func (t *TLState) IsHandshakeDone() bool {
@@ -192,6 +196,10 @@ func (t *TLState) IsHandshakeDone() bool {
 
 func (t *TLState) GetSelectedCipher() CipherSuite {
 	return t.cipher
+}
+
+func (t *TLState) GetSignatureScheme() SignatureScheme {
+	return t.scheme
 }
 
 // Will read data from "inOut" buffer. If the ResponseState is "Responded", "inOut" will include data you need to send to the client

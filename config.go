@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	ErrFailedDecodePemCert = errors.New("failed to decode PEM certificate")
-	ErrFailedDecodePemKey  = errors.New("failed to decode PEM key")
-	ErrUnsupportedKeyType  = errors.New("unsupported private key type")
-	ErrSignatureMismatch   = errors.New("certificate and key types do not match")
+	ErrFailedDecodePemCert   = errors.New("failed to decode PEM certificate")
+	ErrFailedDecodePemKey    = errors.New("failed to decode PEM key")
+	ErrUnsupportedKeyType    = errors.New("unsupported private key type")
+	ErrSignatureMismatch     = errors.New("certificate and key types do not match")
+	ErrUnsupportedEcdsaCurve = errors.New("unsupported ecdsa curve")
 )
 
 type Config struct {
@@ -67,7 +68,7 @@ func ConfigFromDER(serverCert, serverKey []byte) (*Config, error) {
 		return nil, err
 	}
 
-	signer, scheme, err := parseAndDetectKeyType(serverKey, cert)
+	signer, scheme, err := parseAndDetectKeyType(serverKey)
 	if err != nil {
 		return nil, err
 	}
@@ -85,20 +86,20 @@ func ConfigFromDER(serverCert, serverKey []byte) (*Config, error) {
 	return cfg, nil
 }
 
-func parseAndDetectKeyType(der []byte, cert *x509.Certificate) (crypto.Signer, SignatureScheme, error) {
+func parseAndDetectKeyType(der []byte) (crypto.Signer, SignatureScheme, error) {
 	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-		return detectSignerAndScheme(key, cert)
+		return detectSignerAndScheme(key)
 	}
 	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-		return detectSignerAndScheme(key, cert)
+		return detectSignerAndScheme(key)
 	}
 	if key, err := x509.ParseECPrivateKey(der); err == nil {
-		return detectSignerAndScheme(key, cert)
+		return detectSignerAndScheme(key)
 	}
 	return nil, 0, ErrFailedDecodePemKey
 }
 
-func detectSignerAndScheme(key any, cert *x509.Certificate) (crypto.Signer, SignatureScheme, error) {
+func detectSignerAndScheme(key any) (crypto.Signer, SignatureScheme, error) {
 	switch k := key.(type) {
 
 	case *rsa.PrivateKey:
@@ -110,27 +111,22 @@ func detectSignerAndScheme(key any, cert *x509.Certificate) (crypto.Signer, Sign
 			defined for use in signed TLS handshake messages
 		*/
 
-		switch cert.SignatureAlgorithm {
-		case x509.SHA384WithRSA, x509.SHA384WithRSAPSS:
-			return k, RSA_PSS_RSAE_SHA384, nil
-		case x509.SHA512WithRSA, x509.SHA512WithRSAPSS:
-			return k, RSA_PSS_RSAE_SHA512, nil
-		default:
-			return k, RSA_PSS_RSAE_SHA256, nil
-		}
+		// TODO: even tho this is prettymuch the standard, we should still negotiate this
+		return k, RSA_PSS_RSAE_SHA256, nil
 	case *ecdsa.PrivateKey:
-		switch cert.SignatureAlgorithm {
-		case x509.ECDSAWithSHA256:
+		curve := k.Curve.Params().BitSize
+		switch curve {
+		case 256:
 			return k, ECDSA_SECP256R1_SHA256, nil
-		case x509.ECDSAWithSHA384:
+		case 384:
 			return k, ECDSA_SECP384R1_SHA384, nil
-		case x509.ECDSAWithSHA512:
+		case 521:
 			return k, ECDSA_SECP521R1_SHA512, nil
+		default:
+			return nil, 0, ErrUnsupportedEcdsaCurve
 		}
 	case ed25519.PrivateKey:
-		if cert.SignatureAlgorithm == x509.PureEd25519 {
-			return k, ED25519, nil
-		}
+		return k, ED25519, nil
 	}
 	return nil, 0, ErrUnsupportedKeyType
 }

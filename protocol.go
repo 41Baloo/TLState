@@ -1,6 +1,7 @@
 package TLState
 
 import (
+	"crypto"
 	"encoding/binary"
 	"io"
 
@@ -182,7 +183,26 @@ enum {
 type SignatureScheme uint16
 
 const (
+
+	// PKCS1 is not allowed to be used.
+	RSA_PKCS1_SHA256 SignatureScheme = 0x0401
+	RSA_PKCS1_SHA384 SignatureScheme = 0x0501
+	RSA_PKCS1_SHA512 SignatureScheme = 0x0601
+
+	ECDSA_SECP256R1_SHA256 SignatureScheme = 0x0403
+	ECDSA_SECP384R1_SHA384 SignatureScheme = 0x0503
+	ECDSA_SECP521R1_SHA512 SignatureScheme = 0x0603
+
 	RSA_PSS_RSAE_SHA256 SignatureScheme = 0x0804
+	RSA_PSS_RSAE_SHA384 SignatureScheme = 0x0805
+	RSA_PSS_RSAE_SHA512 SignatureScheme = 0x0806
+
+	ED25519 SignatureScheme = 0x0807
+	ED448   SignatureScheme = 0x0808
+
+	RSA_PSS_PSS_SHA256 SignatureScheme = 0x0809
+	RSA_PSS_PSS_SHA384 SignatureScheme = 0x080a
+	RSA_PSS_PSS_SHA512 SignatureScheme = 0x080b
 )
 
 func (s SignatureScheme) ToBytes() []byte {
@@ -191,11 +211,71 @@ func (s SignatureScheme) ToBytes() []byte {
 
 func (s SignatureScheme) ToBytesConst() []byte {
 	switch s {
+	case RSA_PKCS1_SHA256:
+		return []byte{0x04, 0x01}
+	case RSA_PKCS1_SHA384:
+		return []byte{0x05, 0x01}
+	case RSA_PKCS1_SHA512:
+		return []byte{0x06, 0x01}
+	case ECDSA_SECP256R1_SHA256:
+		return []byte{0x04, 0x03}
+	case ECDSA_SECP384R1_SHA384:
+		return []byte{0x05, 0x03}
+	case ECDSA_SECP521R1_SHA512:
+		return []byte{0x06, 0x03}
 	case RSA_PSS_RSAE_SHA256:
 		return []byte{0x08, 0x04}
+	case RSA_PSS_RSAE_SHA384:
+		return []byte{0x08, 0x05}
+	case RSA_PSS_RSAE_SHA512:
+		return []byte{0x08, 0x06}
+	case ED25519:
+		return []byte{0x08, 0x07}
+	case ED448:
+		return []byte{0x08, 0x08}
+	case RSA_PSS_PSS_SHA256:
+		return []byte{0x08, 0x09}
+	case RSA_PSS_PSS_SHA384:
+		return []byte{0x08, 0x0a}
+	case RSA_PSS_PSS_SHA512:
+		return []byte{0x08, 0x0b}
 	default:
-		panic("not implemented")
+		panic("unsupported signature scheme")
 	}
+}
+
+type Hash uint8
+
+func (s SignatureScheme) GetHash() crypto.Hash {
+	switch s {
+	case RSA_PKCS1_SHA256, RSA_PSS_RSAE_SHA256, ECDSA_SECP256R1_SHA256, RSA_PSS_PSS_SHA256:
+		return crypto.SHA256
+	case RSA_PKCS1_SHA384, RSA_PSS_RSAE_SHA384, ECDSA_SECP384R1_SHA384, RSA_PSS_PSS_SHA384:
+		return crypto.SHA384
+	case RSA_PKCS1_SHA512, RSA_PSS_RSAE_SHA512, ECDSA_SECP521R1_SHA512, RSA_PSS_PSS_SHA512:
+		return crypto.SHA512
+	case ED25519:
+		return 0 // Ed25519 doesn't use pre-hashing
+	default:
+		panic("unsupported signature scheme hash")
+	}
+}
+
+func (s SignatureScheme) IsEdDSA() bool {
+	return s == ED25519 || s == ED448
+}
+
+func (s SignatureScheme) IsECDSA() bool {
+	return s == ECDSA_SECP256R1_SHA256 || s == ECDSA_SECP384R1_SHA384 || s == ECDSA_SECP521R1_SHA512
+}
+
+func (s SignatureScheme) IsRSAPSS() bool {
+	return s == RSA_PSS_RSAE_SHA256 || s == RSA_PSS_RSAE_SHA384 || s == RSA_PSS_RSAE_SHA512 ||
+		s == RSA_PSS_PSS_SHA256 || s == RSA_PSS_PSS_SHA384 || s == RSA_PSS_PSS_SHA512
+}
+
+func (s SignatureScheme) IsRSAPKCS1() bool {
+	return s == RSA_PKCS1_SHA256 || s == RSA_PKCS1_SHA384 || s == RSA_PKCS1_SHA512
 }
 
 // https://datatracker.ietf.org/doc/html/rfc8446#section-4.2

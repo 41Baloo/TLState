@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"io"
 
@@ -422,19 +423,40 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	buf[64+contextLen] = 0x00
 	copy(buf[64+contextLen+1:], transcriptHash[:])
 
-	toSign := sha256.Sum256(buf)
+	sigScheme := t.Config.SignatureScheme
+
+	sHash := sigScheme.GetHash()
+
+	var toSign []byte
+	switch sHash {
+	case crypto.SHA256:
+		tmp := sha256.Sum256(buf)
+		toSign = tmp[:]
+	case crypto.SHA384:
+		tmp := sha512.Sum384(buf)
+		toSign = tmp[:]
+	case crypto.SHA512:
+		tmp := sha512.Sum512(buf)
+		toSign = tmp[:]
+	case 0:
+		toSign = buf
+	}
 
 	// We no longer need buf at this point, simply reset the length to what it was before to continue using the buffer
 	out.B = out.B[:outLength]
 	out.Write(toSign[:])
 
-	signature, err := rsa.SignPSS(
-		rand.Reader,
-		t.Config.ParsedKey,
-		crypto.SHA256,
-		out.B[outLength:],
-		&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: crypto.SHA256},
-	)
+	var options crypto.SignerOpts
+	if sigScheme.IsRSAPSS() { // For RSA we need to specify PSS
+		options = &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			Hash:       sHash,
+		}
+	} else {
+		options = sHash
+	}
+
+	signature, err := t.Config.ParsedKey.Sign(rand.Reader, out.B[outLength:], options)
 	if err != nil {
 		return None, err
 	}
@@ -443,7 +465,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	out.B = EnsureLen(out.B, outLength+2+2+len(signature))
 	signatureBytes := out.B[outLength:]
 
-	signatureScheme := RSA_PSS_RSAE_SHA256.ToBytesConst()
+	signatureScheme := sigScheme.ToBytesConst()
 
 	copy(signatureBytes[0:2], signatureScheme)
 

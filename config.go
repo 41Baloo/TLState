@@ -1,126 +1,151 @@
 package TLState
 
 import (
-	"crypto/rand"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"io"
 	"os"
 	"strings"
-
-	"golang.org/x/crypto/curve25519"
 )
 
 var (
 	ErrFailedDecodePemCert = errors.New("failed to decode PEM certificate")
 	ErrFailedDecodePemKey  = errors.New("failed to decode PEM key")
+	ErrUnsupportedKeyType  = errors.New("unsupported private key type")
+	ErrSignatureMismatch   = errors.New("certificate and key types do not match")
 )
 
 type Config struct {
-	ParsedCert *x509.Certificate
-	ParsedKey  *rsa.PrivateKey
+	ParsedCert      *x509.Certificate
+	ParsedKey       crypto.Signer
+	SignatureScheme SignatureScheme
 
-	PrivateKey []byte
-	PublicKey  []byte
-
-	ServerCert []byte
-	ServerKey  []byte
-
+	ServerCert        []byte
+	ServerKey         []byte
 	CertificateRecord []byte
 
 	Ciphers []CipherSuite
 }
 
-func ConfigFromFile(cert, key string) (*Config, error) {
-	certPEM, err := os.ReadFile(cert)
+func ConfigFromFile(certPath, keyPath string) (*Config, error) {
+	certPEM, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, err
 	}
 
-	keyPEM, err := os.ReadFile(key)
+	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, err
 	}
 
 	certBlock, _ := pem.Decode(certPEM)
-	if certBlock == nil || !strings.HasSuffix(certBlock.Type, "CERTIFICATE") {
+	if certBlock == nil || !strings.Contains(certBlock.Type, "CERTIFICATE") {
 		return nil, ErrFailedDecodePemCert
 	}
-	certDER := certBlock.Bytes
 
-	keyBlock, _ := pem.Decode(keyPEM)
-	if keyBlock == nil || !strings.HasSuffix(keyBlock.Type, "PRIVATE KEY") {
-		return nil, ErrFailedDecodePemKey
+	var keyBlock *pem.Block
+	for {
+		keyBlock, keyPEM = pem.Decode(keyPEM)
+		if keyBlock == nil {
+			return nil, ErrFailedDecodePemKey
+		}
+		if strings.Contains(keyBlock.Type, "PRIVATE KEY") {
+			break
+		}
 	}
-	keyDER := keyBlock.Bytes
 
-	return ConfigFromDER(certDER, keyDER)
+	return ConfigFromDER(certBlock.Bytes, keyBlock.Bytes)
 }
 
 func ConfigFromDER(serverCert, serverKey []byte) (*Config, error) {
-	privateKey := make([]byte, 32)
-	_, err := io.ReadFull(rand.Reader, privateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	publicKey, err := curve25519.X25519(privateKey, curve25519.Basepoint)
-	if err != nil {
-		return nil, err
-	}
-
 	cert, err := x509.ParseCertificate(serverCert)
 	if err != nil {
 		return nil, err
 	}
 
-	// try PKCS#1, then PKCS#8, just for compatibility
-	var key *rsa.PrivateKey
-	if k1, err := x509.ParsePKCS1PrivateKey(serverKey); err == nil {
-		key = k1
-	} else if k8, err2 := x509.ParsePKCS8PrivateKey(serverKey); err2 == nil {
-		rk, ok := k8.(*rsa.PrivateKey)
-		if !ok {
-			return nil, ErrFailedDecodePemKey
-		}
-		key = rk
-	} else {
-		return nil, ErrFailedDecodePemKey
+	signer, scheme, err := parseAndDetectKeyType(serverKey, cert)
+	if err != nil {
+		return nil, err
 	}
 
-	config := Config{
-		ParsedCert: cert,
-		ParsedKey:  key,
-
-		PrivateKey: privateKey,
-		PublicKey:  publicKey,
-
-		ServerCert: serverCert,
-		ServerKey:  serverKey,
-
-		// Technically ChaCha20 would be faster, tho most systems have AES hardware acceleration
-		Ciphers: []CipherSuite{TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256},
+	cfg := &Config{
+		ParsedCert:      cert,
+		ParsedKey:       signer,
+		SignatureScheme: scheme,
+		ServerCert:      serverCert,
+		ServerKey:       serverKey,
+		Ciphers:         []CipherSuite{TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256},
 	}
 
-	config.createGertificateRecord()
-
-	return &config, nil
+	cfg.createCertificateRecord()
+	return cfg, nil
 }
 
-func (c *Config) createGertificateRecord() {
+func parseAndDetectKeyType(der []byte, cert *x509.Certificate) (crypto.Signer, SignatureScheme, error) {
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		return detectSignerAndScheme(key, cert)
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return detectSignerAndScheme(key, cert)
+	}
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return detectSignerAndScheme(key, cert)
+	}
+	return nil, 0, ErrFailedDecodePemKey
+}
 
+func detectSignerAndScheme(key any, cert *x509.Certificate) (crypto.Signer, SignatureScheme, error) {
+	switch k := key.(type) {
+
+	case *rsa.PrivateKey:
+
+		/*
+			RSASSA-PKCS1-v1_5 [RFC8017] with the corresponding hash algorithm
+			as defined in [SHS].  These values refer solely to signatures
+			which appear in certificates (see Section 4.4.2.2) and are not
+			defined for use in signed TLS handshake messages
+		*/
+
+		switch cert.SignatureAlgorithm {
+		case x509.SHA384WithRSA, x509.SHA384WithRSAPSS:
+			return k, RSA_PSS_RSAE_SHA384, nil
+		case x509.SHA512WithRSA, x509.SHA512WithRSAPSS:
+			return k, RSA_PSS_RSAE_SHA512, nil
+		default:
+			return k, RSA_PSS_RSAE_SHA256, nil
+		}
+	case *ecdsa.PrivateKey:
+		switch cert.SignatureAlgorithm {
+		case x509.ECDSAWithSHA256:
+			return k, ECDSA_SECP256R1_SHA256, nil
+		case x509.ECDSAWithSHA384:
+			return k, ECDSA_SECP384R1_SHA384, nil
+		case x509.ECDSAWithSHA512:
+			return k, ECDSA_SECP521R1_SHA512, nil
+		}
+	case ed25519.PrivateKey:
+		if cert.SignatureAlgorithm == x509.PureEd25519 {
+			return k, ED25519, nil
+		}
+	}
+	return nil, 0, ErrUnsupportedKeyType
+}
+
+func (c *Config) createCertificateRecord() {
 	certMsg := []byte{
 		0x00,
 	}
 
-	certEntryLen := 3 + len(c.ServerCert) + 2
+	certLen := 3 + len(c.ServerCert) + 2
 
 	certMsg = append(certMsg,
-		byte(certEntryLen>>16),
-		byte(certEntryLen>>8),
-		byte(certEntryLen))
+		byte(certLen>>16),
+		byte(certLen>>8),
+		byte(certLen))
 
 	certMsg = append(certMsg,
 		byte(len(c.ServerCert)>>16),

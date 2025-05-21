@@ -958,6 +958,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 }
 
 // Write application data into buff. Data in buff will be whiped. Read encrypted data from buff after function call
+// buff.B may not be longer than 2^14
 func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 	buff.WriteByte(byte(RecordTypeApplicationData))
 

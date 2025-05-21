@@ -229,7 +229,44 @@ func (t *TLState) Write(buff *byteBuffer.ByteBuffer) error {
 		return ErrReadDuringHandshake
 	}
 
-	return t.encryptApplicationData(buff)
+	buffLen := buff.Len()
+
+	// Fast path, buffer smaller than 2^14
+	if buffLen <= MaxTLSRecordSize {
+		return t.encryptApplicationData(buff)
+	}
+
+	input := make([]byte, buffLen)
+	copy(input, buff.B[MaxTLSRecordSize:])
+	buff.B = buff.B[:MaxTLSRecordSize]
+
+	inBuff := byteBuffer.Get()
+
+	for off := -MaxTLSRecordSize; off < buffLen; off += MaxTLSRecordSize {
+		end := off + MaxTLSRecordSize
+		if end > buffLen {
+			end = buffLen
+		}
+
+		// For the first iteration we can still use the original buffer
+		// this saves us 2 write operations and 2^14 bytes in copy
+		if off == -MaxTLSRecordSize {
+			err := t.encryptApplicationData(buff)
+			if err != nil {
+				return err
+			}
+		} else {
+			inBuff.Write(input[off:end])
+			err := t.encryptApplicationData(inBuff)
+			if err != nil {
+				return err
+			}
+			buff.Write(inBuff.B)
+			inBuff.Reset()
+		}
+	}
+
+	return nil
 }
 
 func (t *TLState) createAEAD(key []byte) (cipher.AEAD, error) {

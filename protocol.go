@@ -10,6 +10,15 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+const (
+	// https://datatracker.ietf.org/doc/html/rfc8446#section-5.1
+	/*
+		The record layer fragments information blocks into TLSPlaintext
+		records carrying data in chunks of 2^14 bytes or less.
+	*/
+	MaxTLSRecordSize = 1 << 14
+)
+
 // https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.1
 /*
 enum {
@@ -310,8 +319,8 @@ type Extension uint8
 
 const (
 	ExtensionSignatureAlgorithms Extension = 13
-	ExtensionSupportedVersions  Extension = 43
-	ExtensionKeyShare           Extension = 51
+	ExtensionSupportedVersions   Extension = 43
+	ExtensionKeyShare            Extension = 51
 )
 
 // https://datatracker.ietf.org/doc/html/rfc8446#section-4.2

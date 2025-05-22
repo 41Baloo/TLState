@@ -238,12 +238,6 @@ ciphers:
 				}
 			}
 
-			if t.scheme == 0 {
-				data.Reset()
-				marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
-				return Responded, ErrSchemesNotSupported
-			}
-
 		default:
 			// ignore other extensions for now
 		}
@@ -264,6 +258,11 @@ ciphers:
 		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
 		log.Warn().Msg("No valid key share found")
 		return Responded, ErrNoValidKeyShare
+	}
+
+	if t.scheme == 0 {
+		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
+		return Responded, ErrSchemesNotSupported
 	}
 
 	t.handshakeState = HandshakeStateClientHelloDone

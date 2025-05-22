@@ -241,7 +241,7 @@ ciphers:
 			if t.scheme == 0 {
 				data.Reset()
 				marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
-				return Responded, ErrNoValidKeyShare
+				return Responded, ErrSchemesNotSupported
 			}
 
 		default:

@@ -192,11 +192,9 @@ enum {
 type SignatureScheme uint16
 
 const (
-
-	// PKCS1 is not allowed to be used.
-	RSA_PKCS1_SHA256 SignatureScheme = 0x0401
-	RSA_PKCS1_SHA384 SignatureScheme = 0x0501
-	RSA_PKCS1_SHA512 SignatureScheme = 0x0601
+	RSA_PKCS1_SHA256 SignatureScheme = 0x0401 // PKCS1 is not allowed to be used.
+	RSA_PKCS1_SHA384 SignatureScheme = 0x0501 // PKCS1 is not allowed to be used.
+	RSA_PKCS1_SHA512 SignatureScheme = 0x0601 // PKCS1 is not allowed to be used.
 
 	ECDSA_SECP256R1_SHA256 SignatureScheme = 0x0403
 	ECDSA_SECP384R1_SHA384 SignatureScheme = 0x0503
@@ -207,11 +205,11 @@ const (
 	RSA_PSS_RSAE_SHA512 SignatureScheme = 0x0806
 
 	ED25519 SignatureScheme = 0x0807
-	ED448   SignatureScheme = 0x0808
+	ED448   SignatureScheme = 0x0808 // No golang support
 
-	RSA_PSS_PSS_SHA256 SignatureScheme = 0x0809
-	RSA_PSS_PSS_SHA384 SignatureScheme = 0x080a
-	RSA_PSS_PSS_SHA512 SignatureScheme = 0x080b
+	RSA_PSS_PSS_SHA256 SignatureScheme = 0x0809 // No golang support
+	RSA_PSS_PSS_SHA384 SignatureScheme = 0x080a // No golang support
+	RSA_PSS_PSS_SHA512 SignatureScheme = 0x080b // No golang support
 )
 
 func (s SignatureScheme) ToBytes() []byte {
@@ -253,8 +251,6 @@ func (s SignatureScheme) ToBytesConst() []byte {
 	}
 }
 
-type Hash uint8
-
 func (s SignatureScheme) GetHash() crypto.Hash {
 	switch s {
 	case RSA_PKCS1_SHA256, RSA_PSS_RSAE_SHA256, ECDSA_SECP256R1_SHA256, RSA_PSS_PSS_SHA256:
@@ -285,6 +281,41 @@ func (s SignatureScheme) IsRSAPSS() bool {
 
 func (s SignatureScheme) IsRSAPKCS1() bool {
 	return s == RSA_PKCS1_SHA256 || s == RSA_PKCS1_SHA384 || s == RSA_PKCS1_SHA512
+}
+
+func (s SignatureScheme) String() string {
+	switch s {
+	case RSA_PKCS1_SHA256:
+		return "RSA_PKCS1_SHA256"
+	case RSA_PKCS1_SHA384:
+		return "RSA_PKCS1_SHA384"
+	case RSA_PKCS1_SHA512:
+		return "RSA_PKCS1_SHA512"
+	case ECDSA_SECP256R1_SHA256:
+		return "ECDSA_SECP256R1_SHA256"
+	case ECDSA_SECP384R1_SHA384:
+		return "ECDSA_SECP384R1_SHA384"
+	case ECDSA_SECP521R1_SHA512:
+		return "ECDSA_SECP521R1_SHA512"
+	case RSA_PSS_RSAE_SHA256:
+		return "RSA_PSS_RSAE_SHA256"
+	case RSA_PSS_RSAE_SHA384:
+		return "RSA_PSS_RSAE_SHA384"
+	case RSA_PSS_RSAE_SHA512:
+		return "RSA_PSS_RSAE_SHA512"
+	case ED25519:
+		return "ED25519"
+	case ED448:
+		return "ED448"
+	case RSA_PSS_PSS_SHA256:
+		return "RSA_PSS_PSS_SHA256"
+	case RSA_PSS_PSS_SHA384:
+		return "RSA_PSS_PSS_SHA384"
+	case RSA_PSS_PSS_SHA512:
+		return "RSA_PSS_PSS_SHA512"
+	default:
+		return "Invalid SignatureScheme"
+	}
 }
 
 // https://datatracker.ietf.org/doc/html/rfc8446#section-4.2

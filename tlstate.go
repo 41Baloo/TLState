@@ -202,6 +202,22 @@ func (t *TLState) GetSignatureScheme() SignatureScheme {
 	return t.scheme
 }
 
+func (t *TLState) GetSessionID() []byte {
+	return t.sessionID
+}
+
+func (t *TLState) GetClientRandom() []byte {
+	return t.clientRandom
+}
+
+func (t *TLState) GetClientRecordCount() uint64 {
+	return t.clientRecordCount
+}
+
+func (t *TLState) GetServerRecordCount() uint64 {
+	return t.serverRecordCount
+}
+
 // Will read data from "inOut" buffer. If the ResponseState is "Responded", "inOut" will include data you need to send to the client
 func (t *TLState) Feed(inOut *byteBuffer.ByteBuffer) (ResponseState, error) {
 	t.incoming.Write(inOut.B)

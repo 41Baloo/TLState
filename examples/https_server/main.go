@@ -118,7 +118,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	case "/":
 		ctx.buff.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\nHello World!"))
 	default:
-		ctx.buff.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		ctx.buff.Write([]byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"))
 	}
 
 	err = ctx.state.Write(ctx.buff)

@@ -2,6 +2,7 @@ package TLState
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"encoding/binary"
 	"io"
 
@@ -261,6 +262,55 @@ func (s SignatureScheme) GetHash() crypto.Hash {
 		return crypto.SHA512
 	case ED25519:
 		return 0 // Ed25519 doesn't use pre-hashing
+	default:
+		panic("unsupported signature scheme hash")
+	}
+}
+
+/*
+Precalculate options, so we avoid 1 heap alloc on interface conversion
+*/
+
+var (
+	SHA256_OPTIONS crypto.SignerOpts = crypto.SHA256
+	SHA384_OPTIONS crypto.SignerOpts = crypto.SHA384
+	SHA512_OPTIONS crypto.SignerOpts = crypto.SHA512
+
+	NO_OPTIONS crypto.SignerOpts = crypto.Hash(0)
+
+	RSA_PSS_SHA256_OPTIONS = &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthEqualsHash,
+		Hash:       crypto.SHA256,
+	}
+	RSA_PSS_SHA384_OPTIONS = &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthEqualsHash,
+		Hash:       crypto.SHA384,
+	}
+	RSA_PSS_SHA512_OPTIONS = &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthEqualsHash,
+		Hash:       crypto.SHA512,
+	}
+)
+
+func (s SignatureScheme) GetSignerOpts() crypto.SignerOpts {
+	switch s {
+
+	case RSA_PSS_RSAE_SHA256, RSA_PSS_PSS_SHA256:
+		return RSA_PSS_SHA256_OPTIONS
+	case RSA_PSS_RSAE_SHA384, RSA_PSS_PSS_SHA384:
+		return RSA_PSS_SHA384_OPTIONS
+	case RSA_PSS_RSAE_SHA512, RSA_PSS_PSS_SHA512:
+		return RSA_PSS_SHA512_OPTIONS
+
+	case RSA_PKCS1_SHA256, ECDSA_SECP256R1_SHA256:
+		return SHA256_OPTIONS
+	case RSA_PKCS1_SHA384, ECDSA_SECP384R1_SHA384:
+		return SHA384_OPTIONS
+	case RSA_PKCS1_SHA512, ECDSA_SECP521R1_SHA512:
+		return SHA512_OPTIONS
+
+	case ED25519:
+		return NO_OPTIONS
 	default:
 		panic("unsupported signature scheme hash")
 	}
@@ -538,17 +588,17 @@ func handleAlert(in []byte) error {
 	level := AlertLevel(in[0])
 	description := AlertDescription(in[1])
 
-	log.Warn().
-		Str("Level", level.String()).
-		Str("Description", description.String()).
-		Msg("Alert received")
-
 	// As a special case, we return EOF here to let users know the connection should never be read from again
 	// "This alert notifies the recipient that the sender will not send any more messages on this connection.
 	// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
 	if description == AlertDescriptionCloseNotify {
 		return io.EOF
 	}
+
+	log.Warn().
+		Str("Level", level.String()).
+		Str("Description", description.String()).
+		Msg("Alert received")
 
 	// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
 	// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
@@ -570,12 +620,16 @@ func marshallHandshake(msgType HandshakeType, inOut *byteBuffer.ByteBuffer) Resp
 
 	bodyLen := inOut.Len()
 
-	hdr := make([]byte, 4) // Escapes to heap
-	hdr[0] = byte(msgType)
-	hdr[1] = byte(bodyLen >> 16)
-	hdr[2] = byte(bodyLen >> 8)
-	hdr[3] = byte(bodyLen)
-	inOut.B = append(hdr, inOut.B...)
+	// Shift back inOut by 4 bytes, to prepend headers directly. This avoids 1 heap allocation
+	// but comes at the cost of O(n) copying the pre-existing buffer. However append would
+	// come at the same cost, so this should be more efficient.
+	inOut.B = EnsureLen(inOut.B, bodyLen+4)
+	copy(inOut.B[4:], inOut.B[:bodyLen])
+
+	inOut.B[0] = byte(msgType)
+	inOut.B[1] = byte(bodyLen >> 16)
+	inOut.B[2] = byte(bodyLen >> 8)
+	inOut.B[3] = byte(bodyLen)
 
 	return Responded
 }
@@ -598,13 +652,17 @@ func BuildHandshakeMessage(msgType HandshakeType, inOut *byteBuffer.ByteBuffer) 
 
 // Wrap payload in full TLS record (type + version + 2-byte length).
 func BuildRecordMessage(recType RecordType, inOut *byteBuffer.ByteBuffer) ResponseState {
-	header := make([]byte, 5) // Escapes to heap
-	header[0] = byte(recType)
-	header[1] = byte(ProtocolVersion >> 8)
-	header[2] = byte(ProtocolVersion & 0xFF)
-	binary.BigEndian.PutUint16(header[3:], uint16(inOut.Len()))
 
-	inOut.B = append(header, inOut.B...)
+	bodyLen := inOut.Len()
+
+	// Same trick as with marshallHandshake
+	inOut.B = EnsureLen(inOut.B, bodyLen+5)
+	copy(inOut.B[5:], inOut.B[:bodyLen])
+
+	inOut.B[0] = byte(recType)
+	inOut.B[1] = byte(ProtocolVersion >> 8)
+	inOut.B[2] = byte(ProtocolVersion & 0xFF)
+	binary.BigEndian.PutUint16(inOut.B[3:], uint16(bodyLen))
 
 	return Responded
 }

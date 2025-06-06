@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -41,7 +40,7 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 			break
 		}
 
-		rawHeader := make([]byte, 5) // Escapes to heap
+		rawHeader := make([]byte, 5)
 		t.incoming.Read(rawHeader)
 
 		head, tail = t.incoming.Peek(length)
@@ -308,18 +307,21 @@ func (t *TLState) generateServerResponse(out *byteBuffer.ByteBuffer) (ResponseSt
 // Write serverHello info buffer
 func (t *TLState) generateServerHello(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 
-	serverRandom := make([]byte, 32) // Escapes to heap
-	_, err := io.ReadFull(rand.Reader, serverRandom)
+	// Ensure we have enough space for 2 bytes + 32 bytes of serverRandom + 1 byte sessionID length
+	out.B = EnsureLen(out.B, 35)
+
+	// Skip 2 bytes ahead and fill serverRandom
+	_, err := io.ReadFull(rand.Reader, out.B[2:34])
 	if err != nil {
 		return None, err
 	}
 
-	out.Write([]byte{
-		0x03, 0x03, // Legacy version (TLS 1.2)
-	})
-	out.Write(serverRandom)
+	// Legacy version (TLS 1.2)
+	out.B[0] = 0x03
+	out.B[1] = 0x03
 
-	out.WriteByte(byte(len(t.sessionID)))
+	// Directly write sessionID length, skips 1 bounds check
+	out.B[34] = byte(len(t.sessionID))
 	out.Write(t.sessionID)
 
 	// Our negotiated cipher
@@ -448,7 +450,8 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	buf[64+contextLen] = 0x00
 	copy(buf[64+contextLen+1:], transcriptHash[:])
 
-	sHash := t.scheme.GetHash()
+	options := t.scheme.GetSignerOpts()
+	sHash := options.HashFunc()
 
 	var toSign []byte
 	switch sHash {
@@ -468,16 +471,6 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	// We no longer need buf at this point, simply reset the length to what it was before to continue using the buffer
 	out.B = out.B[:outLength]
 	out.Write(toSign[:])
-
-	var options crypto.SignerOpts
-	if t.scheme.IsRSAPSS() { // For RSA we need to specify PSS
-		options = &rsa.PSSOptions{
-			SaltLength: rsa.PSSSaltLengthEqualsHash,
-			Hash:       sHash,
-		}
-	} else {
-		options = sHash
-	}
 
 	signature, err := t.config.parsedKey.Sign(rand.Reader, out.B[outLength:], options)
 	if err != nil {
@@ -775,8 +768,9 @@ func (t *TLState) calculateApplicationKeys() error {
 
 	zeros := make([]byte, sha256.Size) // Escapes to heap
 	hkdfExtract(buff, zeros)
-	masterSecret := make([]byte, 0, 32)
-	masterSecret = append(masterSecret, buff.B...)
+	masterSecret := make([]byte, buff.Len()) // Escapes to heap
+	copy(masterSecret, buff.B)
+
 	buff.Reset()
 
 	// t.clientApplicationTrafficSecret
@@ -972,7 +966,7 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 	additionalData := buff.B[dataLength+12:]
 
 	// XOR the last bytes with the record count
-	nonceCount := make([]byte, 8) // Escapes to heap
+	nonceCount := make([]byte, 8)
 	binary.BigEndian.PutUint64(nonceCount, t.serverRecordCount)
 	for i := 0; i < 8; i++ {
 		nonce[4+i] ^= nonceCount[i]
@@ -1052,11 +1046,4 @@ func hkdfExpandLabel(out *byteBuffer.ByteBuffer, secret []byte, label string, co
 	}
 
 	return Responded, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

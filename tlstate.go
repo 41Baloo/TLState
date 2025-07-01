@@ -3,13 +3,10 @@ package TLState
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"errors"
-	"io"
 	"sync"
 
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/curve25519"
 
 	"github.com/41Baloo/TLState/byteBuffer"
 	ringBuffer "github.com/panjf2000/gnet/v2/pkg/pool/ringbuffer"
@@ -21,10 +18,12 @@ var (
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
 
-	ErrTLS13NotSupported   = errors.New("client does not support TLS 1.3")           // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
-	ErrNoValidKeyShare     = errors.New("no valid keyshare found in clientHello")    // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
-	ErrCiphersNotSupported = errors.New("client does not support our given ciphers") // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
-	ErrSchemesNotSupported = errors.New("client does not support our signature(s)")  // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrHandshakeKeysSetupFailure = errors.New("failed to setup handshake keys")
+
+	ErrTLS13NotSupported       = errors.New("client does not support TLS 1.3")                      // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
+	ErrNamedGroupsNotSupported = errors.New("client does not support our given namedGroups/curves") // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrCiphersNotSupported     = errors.New("client does not support our given ciphers")            // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrSchemesNotSupported     = errors.New("client does not support our signature(s)")             // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 
 	ErrMalformedAlert = errors.New("client sent a malformed alert")
 	ErrFatalAlert     = errors.New("client has sent a fatal alert")
@@ -83,8 +82,9 @@ type TLState struct {
 
 	handshakeState HandshakeState
 
-	cipher CipherSuite
-	scheme SignatureScheme
+	namedGroup NamedGroup
+	cipher     CipherSuite
+	scheme     SignatureScheme
 
 	handshakeCipher cipher.AEAD
 	clientCipher    cipher.AEAD
@@ -100,9 +100,9 @@ var pool = &sync.Pool{
 			incoming:          ringBuffer.Get(),
 			handshakeMessages: byteBuffer.Get(),
 
-			privateKey:    make([]byte, 32),
-			publicKey:     make([]byte, 0, 32),
-			peerPublicKey: make([]byte, 0, 32),
+			privateKey:    make([]byte, 0, 32),
+			publicKey:     make([]byte, 0, 64),
+			peerPublicKey: make([]byte, 0, 64),
 
 			handshakeSecret:                make([]byte, 0, 32),
 			clientHandshakeTrafficSecret:   make([]byte, 0, 32),
@@ -127,18 +127,6 @@ var pool = &sync.Pool{
 
 func Get() (*TLState, error) {
 	state := pool.Get().(*TLState)
-
-	_, err := io.ReadFull(rand.Reader, state.privateKey)
-	if err != nil {
-		pool.Put(state)
-		return nil, err
-	}
-
-	state.publicKey, err = curve25519.X25519(state.privateKey, curve25519.Basepoint)
-	if err != nil {
-		pool.Put(state)
-		return nil, err
-	}
 
 	return state, nil
 }
@@ -174,6 +162,7 @@ func Put(t *TLState) {
 	t.serverRecordCount = 0
 	t.clientRecordCount = 0
 
+	t.namedGroup = 0
 	t.cipher = 0
 	t.scheme = 0
 
@@ -192,6 +181,10 @@ func (t *TLState) SetConfig(config *Config) {
 
 func (t *TLState) IsHandshakeDone() bool {
 	return t.handshakeState == HandshakeStateDone
+}
+
+func (t *TLState) GetSelectedNamedGroup() NamedGroup {
+	return t.namedGroup
 }
 
 func (t *TLState) GetSelectedCipher() CipherSuite {

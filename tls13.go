@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"io"
 
-	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/41Baloo/TLState/byteBuffer"
@@ -166,7 +165,7 @@ ciphers:
 	}
 	extEnd := offset + extTotalLen
 
-	var supportsTLS13, hasKeyShare bool
+	var supportsTLS13 bool
 
 	for offset < extEnd {
 		// need at least 4 bytes for type+length
@@ -202,20 +201,24 @@ ciphers:
 			// extData[0:2] = total length of all keyshares
 			if len(extData) >= 2 {
 				ksLen := int(binary.BigEndian.Uint16(extData[0:2]))
-				pos := 2
-				for pos+4 <= 2+ksLen && pos+4 <= len(extData) {
-					group := NamedGroup(binary.BigEndian.Uint16(extData[pos : pos+2]))
-					keyLen := int(binary.BigEndian.Uint16(extData[pos+2 : pos+4]))
-					pos += 4
-					if pos+keyLen > len(extData) {
-						break
+
+			curves:
+				for _, want := range t.config.namedGroups {
+					pos := 2
+					for pos+4 <= 2+ksLen && pos+4 <= len(extData) {
+						group := NamedGroup(binary.BigEndian.Uint16(extData[pos : pos+2]))
+						keyLen := int(binary.BigEndian.Uint16(extData[pos+2 : pos+4]))
+						pos += 4
+						if pos+keyLen > len(extData) {
+							break
+						}
+						if group == want {
+							t.peerPublicKey = append(t.peerPublicKey, extData[pos:pos+keyLen]...)
+							t.namedGroup = group
+							break curves
+						}
+						pos += keyLen
 					}
-					if group == NamedGroupX25519 {
-						t.peerPublicKey = append(t.peerPublicKey, extData[pos:pos+keyLen]...)
-						hasKeyShare = true
-						break
-					}
-					pos += keyLen
 				}
 			}
 
@@ -252,11 +255,16 @@ ciphers:
 		return Responded, ErrTLS13NotSupported
 	}
 
-	if !hasKeyShare {
+	if t.namedGroup == 0 {
 		// RFC suggest we MAY send a RetryRequest, we won't for now tho
 		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
-		log.Warn().Msg("No valid key share found")
-		return Responded, ErrNoValidKeyShare
+		return Responded, ErrNamedGroupsNotSupported
+	}
+
+	err := t.setupHandshakeKeys()
+	if err != nil {
+		marshallAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, data)
+		return Responded, ErrHandshakeKeysSetupFailure
 	}
 
 	if t.scheme == 0 {
@@ -267,6 +275,23 @@ ciphers:
 	t.handshakeState = HandshakeStateClientHelloDone
 
 	return t.generateServerResponse(data)
+}
+
+func (t *TLState) setupHandshakeKeys() error {
+
+	curve := t.namedGroup.GetCurve()
+
+	privateKey, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	publicKey := privateKey.PublicKey()
+
+	t.privateKey = append(t.privateKey, privateKey.Bytes()...)
+	t.publicKey = append(t.publicKey, publicKey.Bytes()...)
+
+	return nil
 }
 
 // We take in an out byteBuffer that we write our response to, to avoid heap allocations
@@ -361,7 +386,11 @@ func (t *TLState) generateServerHelloExtensions(out *byteBuffer.ByteBuffer) Resp
 	out.Write([]byte{
 		0x00, 0x33, // Extension type, not using constant, due to performance
 		byte(keyShareLen >> 8), byte(keyShareLen), // Length
-		0x00, 0x1D, // x25519, again not using constant here, for performance
+	})
+
+	out.Write(t.namedGroup.ToBytesConst())
+
+	out.Write([]byte{
 		byte(pubKeyLen >> 8),
 		byte(pubKeyLen),
 	})
@@ -653,7 +682,19 @@ func (t *TLState) processClientFinished(data []byte) error {
 
 func (t *TLState) calculateHandshakeKeys() error {
 
-	sharedSecret, err := curve25519.X25519(t.privateKey, t.peerPublicKey)
+	curve := t.namedGroup.GetCurve()
+
+	privateKey, err := curve.NewPrivateKey(t.privateKey)
+	if err != nil {
+		return err
+	}
+
+	pPublicKey, err := curve.NewPublicKey(t.peerPublicKey)
+	if err != nil {
+		return err
+	}
+
+	sharedSecret, err := privateKey.ECDH(pPublicKey)
 	if err != nil {
 		return err
 	}

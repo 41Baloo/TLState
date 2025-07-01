@@ -94,7 +94,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		return gnet.None
 	}
 
-	log.Printf("%s (%s) => %s", c.RemoteAddr(), ctx.state.GetSelectedCipher().String(), string(ctx.buff.B))
+	log.Printf("%s (%s -> %s) => %s", c.RemoteAddr(), ctx.state.GetSelectedNamedGroup().String(), ctx.state.GetSelectedCipher().String(), string(ctx.buff.B))
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {

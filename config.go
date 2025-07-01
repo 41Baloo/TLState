@@ -29,7 +29,8 @@ type Config struct {
 	serverKey         []byte
 	certificateRecord []byte
 
-	ciphers []CipherSuite
+	ciphers     []CipherSuite
+	namedGroups []NamedGroup
 }
 
 func ConfigFromFile(certPath, keyPath string) (*Config, error) {
@@ -79,6 +80,7 @@ func ConfigFromDER(serverCert, serverKey []byte) (*Config, error) {
 		signatureSchemes: scheme,
 		serverCert:       serverCert,
 		serverKey:        serverKey,
+		namedGroups:      []NamedGroup{NamedGroupX25519, NamedGroupP256},
 		ciphers:          []CipherSuite{TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, TLS_AES_256_GCM_SHA384},
 	}
 
@@ -130,6 +132,15 @@ func detectSignerAndScheme(key any) (crypto.Signer, []SignatureScheme, error) {
 		return k, []SignatureScheme{ED25519}, nil
 	}
 	return nil, nil, ErrUnsupportedKeyType
+}
+
+// (known as "elliptic curves in TLS1.1 & 1.2")
+func (c *Config) SetNamedGroups(namedGroups []NamedGroup) {
+	c.namedGroups = namedGroups
+}
+
+func (c *Config) GetNamedGroups() []NamedGroup {
+	return c.namedGroups
 }
 
 func (c *Config) SetCiphers(ciphers []CipherSuite) {

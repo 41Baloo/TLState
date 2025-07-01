@@ -14,6 +14,7 @@ func main() {
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS13,
 		MaxVersion:         tls.VersionTLS13,
+		CurvePreferences:   []tls.CurveID{tls.CurveP256},
 	}
 
 	conn, err := tls.Dial("tcp", "localhost:8443", config)

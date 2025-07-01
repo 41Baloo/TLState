@@ -1,3 +1,5 @@
+github.com/41Baloo/TLState v0.0.0-20250701185345-01f3e765f0f9 h1:tedrJUQe4SzdLadn5C0FteTg9GxNSW1DjykBKW84Lss=
+github.com/41Baloo/TLState v0.0.0-20250701185345-01f3e765f0f9/go.mod h1:sIVULf2pVE13qnCl493Q/WOXD5Krd6uK44g1SVfGK+c=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=

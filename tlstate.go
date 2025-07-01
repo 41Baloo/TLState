@@ -136,6 +136,7 @@ func Put(t *TLState) {
 	t.incoming.Reset()
 	t.handshakeMessages.Reset()
 
+	t.privateKey = t.privateKey[:0]
 	t.publicKey = t.publicKey[:0]
 	t.handshakeState = HandshakeStateInitial
 

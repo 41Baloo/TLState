@@ -2,8 +2,12 @@ package TLState
 
 import (
 	"crypto"
+	"crypto/ecdh"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
+	"hash"
 	"io"
 
 	"github.com/41Baloo/TLState/byteBuffer"
@@ -94,6 +98,52 @@ const (
 	HandshakeTypeMessageHash = 254
 )
 
+type cipherHash uint8
+
+const (
+	SHA256 cipherHash = iota
+	SHA384
+)
+
+type HashSettings struct {
+	nullValue []byte // stores hash(nil)
+	size      int
+	newFunc   func() hash.Hash
+	hash      cipherHash
+}
+
+func (h HashSettings) Hash(data []byte) []byte {
+	switch h.hash {
+	case SHA256:
+		sum := sha256.Sum256(data)
+		return sum[:]
+	case SHA384:
+		sum := sha512.Sum384(data)
+		return sum[:]
+	default:
+		panic("unknown hash")
+	}
+}
+
+var (
+	_sha256NullTmp = sha256.Sum256(nil)
+	_sha384NullTmp = sha512.Sum384(nil)
+
+	HASH_SHA256_SETTINGS = &HashSettings{
+		nullValue: _sha256NullTmp[:],
+		size:      sha256.Size,
+		newFunc:   sha256.New,
+		hash:      SHA256,
+	}
+
+	HASH_SHA384_SETTINGS = &HashSettings{
+		nullValue: _sha384NullTmp[:],
+		size:      sha512.Size384,
+		newFunc:   sha512.New384,
+		hash:      SHA384,
+	}
+)
+
 // https://datatracker.ietf.org/doc/html/rfc8446#appendix-B.4
 /*
 +------------------------------+-------------+
@@ -114,11 +164,28 @@ type CipherSuite uint16
 
 const (
 	TLS_AES_128_GCM_SHA256 CipherSuite = (0x1301 + iota)
-	TLS_AES_256_GCM_SHA384             // not implemented
+	TLS_AES_256_GCM_SHA384
 	TLS_CHACHA20_POLY1305_SHA256
-	TLS_AES_128_CCM_SHA256   // not implemented
-	TLS_AES_128_CCM_8_SHA256 // not implemented
+
+	/*
+		NOT IMPLEMENTED.
+
+		See https://github.com/golang/go/issues/27484
+	*/
+	TLS_AES_128_CCM_SHA256   // CCM not implemented
+	TLS_AES_128_CCM_8_SHA256 // CCM not implemented
 )
+
+func (c CipherSuite) GetHash() *HashSettings {
+	switch c {
+	case TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256:
+		return HASH_SHA256_SETTINGS
+	case TLS_AES_256_GCM_SHA384:
+		return HASH_SHA384_SETTINGS
+	default:
+		panic("unsupported cipher suite " + c.String())
+	}
+}
 
 func (c CipherSuite) KeyLen() int {
 	switch c {
@@ -424,8 +491,51 @@ enum {
 type NamedGroup uint16
 
 const (
+	NamedGroupP256   NamedGroup = 0x0017 // aka secp256r1 or prime256v1
 	NamedGroupX25519 NamedGroup = 0x001D
 )
+
+func (n NamedGroup) ToBytes() []byte {
+	return []byte{byte(n >> 8), byte(n & 0xFF)}
+}
+
+func (n NamedGroup) ToBytesConst() []byte {
+	switch n {
+	case NamedGroupP256:
+		return []byte{0x00, 0x17}
+	case NamedGroupX25519:
+		return []byte{0x00, 0x1D}
+	default:
+		panic("unsupported named group")
+	}
+}
+
+var (
+	CURVE_P256   ecdh.Curve = ecdh.P256()
+	CURVE_X25519 ecdh.Curve = ecdh.X25519()
+)
+
+func (n NamedGroup) GetCurve() ecdh.Curve {
+	switch n {
+	case NamedGroupP256:
+		return CURVE_P256
+	case NamedGroupX25519:
+		return CURVE_X25519
+	default:
+		panic("unsupported named group")
+	}
+}
+
+func (n NamedGroup) String() string {
+	switch n {
+	case NamedGroupP256:
+		return "P-256"
+	case NamedGroupX25519:
+		return "X25519"
+	default:
+		return "Invalid NamedGroup"
+	}
+}
 
 const (
 	ProtocolVersion = 0x0303 // Backwards compatibility

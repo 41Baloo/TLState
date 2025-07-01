@@ -14,6 +14,7 @@ A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TL
 
   * `TLS_CHACHA20_POLY1305_SHA256`
   * `TLS_AES_128_GCM_SHA256`
+  * `TLS_AES_256_GCM_SHA384`
 
 ---
 

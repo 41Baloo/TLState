@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"time"
+
+	_ "net/http/pprof"
 
 	"github.com/41Baloo/TLState"
 	"github.com/41Baloo/TLState/byteBuffer"
@@ -59,6 +62,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	resp, err := ctx.state.Feed(ctx.buff)
 	if err != nil {
+		log.Println(err)
 		return gnet.Close
 	}
 
@@ -77,6 +81,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to batch a single response
 		resp, err = ctx.state.Read(ctx.buff)
 		if err != nil {
+			log.Println(err)
 			return gnet.None
 		}
 
@@ -89,10 +94,11 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		return gnet.None
 	}
 
-	log.Printf("%s => %s", c.RemoteAddr(), string(ctx.buff.B))
+	log.Printf("%s (%s) => %s", c.RemoteAddr(), ctx.state.GetSelectedCipher().String(), string(ctx.buff.B))
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {
+		log.Println(err)
 		return gnet.Close
 	}
 
@@ -120,7 +126,14 @@ func main() {
 	flag.BoolVar(&multicore, "multicore", true, "multicore")
 	flag.Parse()
 
+	opts := []gnet.Option{
+		gnet.WithMulticore(true),
+		gnet.WithReusePort(true),
+		gnet.WithReuseAddr(true),
+		gnet.WithTCPKeepAlive(1 * time.Minute),
+	}
+
 	hs := &HTTPServer{addr: fmt.Sprintf("tcp://:%d", port), multicore: multicore}
 
-	log.Println("server exits:", gnet.Run(hs, hs.addr, gnet.WithMulticore(multicore)))
+	log.Println("server exits:", gnet.Run(hs, hs.addr, opts...))
 }

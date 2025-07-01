@@ -289,7 +289,7 @@ func (t *TLState) createAEAD(key []byte) (cipher.AEAD, error) {
 	switch t.cipher {
 	case TLS_CHACHA20_POLY1305_SHA256:
 		return chacha20poly1305.New(key)
-	case TLS_AES_128_GCM_SHA256:
+	case TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384:
 		block, err := aes.NewCipher(key)
 		if err != nil {
 			return nil, err

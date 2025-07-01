@@ -433,7 +433,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 
 	outLength := out.Len()
 
-	transcriptHash := sha256.Sum256(t.handshakeMessages.Bytes())
+	transcriptHash, _ := t.calculateTranscriptHash()
 
 	// Build the context string as per RFC8446
 	context := []byte("TLS 1.3, server CertificateVerify")
@@ -448,7 +448,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	}
 	copy(buf[64:], context)
 	buf[64+contextLen] = 0x00
-	copy(buf[64+contextLen+1:], transcriptHash[:])
+	copy(buf[64+contextLen+1:], transcriptHash)
 
 	options := t.scheme.GetSignerOpts()
 	sHash := options.HashFunc()
@@ -531,17 +531,18 @@ func (t *TLState) generateFinishedRecord(out *byteBuffer.ByteBuffer) (ResponseSt
 }
 
 func (t *TLState) calculateVerifyData(out *byteBuffer.ByteBuffer, secret []byte) (ResponseState, error) {
-	resp, err := hkdfExpandLabel(out, secret, "finished", []byte{}, 32)
+	transcriptHash, hash := t.calculateTranscriptHash() // Moved to heap
+
+	resp, err := hkdfExpandLabel(out, hash, secret, "finished", []byte{}, hash.size)
 	if err != nil {
 		return resp, err
 	}
 
 	outLength := out.Len()
 
-	transcriptHash := sha256.Sum256(t.handshakeMessages.Bytes()) // Moved to heap
-	out.Write(transcriptHash[:])
+	out.Write(transcriptHash)
 
-	h := hmac.New(sha256.New, out.B[:outLength])
+	h := hmac.New(hash.newFunc, out.B[:outLength])
 	h.Write(out.B[outLength:])
 
 	out.Reset()
@@ -657,36 +658,35 @@ func (t *TLState) calculateHandshakeKeys() error {
 		return err
 	}
 
+	transcriptHash, hash := t.calculateTranscriptHash()
+
 	buff := byteBuffer.Get()
 	defer byteBuffer.Put(buff)
-	buff.B = EnsureLen(buff.B, 32)
+	buff.B = EnsureLen(buff.B, hash.size)
 	ZeroSlice(buff.B)
 
-	hkdfExtract(buff, buff.B)
-	earlySecret := make([]byte, 32) // Escapes to heap
+	hkdfExtract(buff, hash, buff.B)
+	earlySecret := make([]byte, hash.size) // Escapes to heap
 	copy(earlySecret, buff.B)
 
 	buff.Reset()
 
-	emptyHash := sha256.Sum256(nil)
-
 	//derivedSecret
-	_, err = hkdfExpandLabel(buff, earlySecret, "derived", emptyHash[:], 32)
+	_, err = hkdfExpandLabel(buff, hash, earlySecret, "derived", hash.nullValue, hash.size)
 	if err != nil {
 		return err
 	}
-	hkdfExtract(buff, sharedSecret)
+	hkdfExtract(buff, hash, sharedSecret)
 	t.handshakeSecret = append(t.handshakeSecret, buff.B...)
 	buff.Reset()
 
-	transcriptHash := sha256.Sum256(t.handshakeMessages.Bytes())
-
 	_, err = hkdfExpandLabel(
 		buff,
+		hash,
 		t.handshakeSecret,
 		"c hs traffic",
-		transcriptHash[:],
-		32,
+		transcriptHash,
+		hash.size,
 	)
 	if err != nil {
 		return err
@@ -696,10 +696,11 @@ func (t *TLState) calculateHandshakeKeys() error {
 
 	_, err = hkdfExpandLabel(
 		buff,
+		hash,
 		t.handshakeSecret,
 		"s hs traffic",
-		transcriptHash[:],
-		32,
+		transcriptHash,
+		hash.size,
 	)
 	if err != nil {
 		return err
@@ -709,28 +710,28 @@ func (t *TLState) calculateHandshakeKeys() error {
 
 	// Derive keys and IVs
 	keyLen := t.cipher.KeyLen()
-	_, err = hkdfExpandLabel(buff, t.clientHandshakeTrafficSecret, "key", nil, keyLen)
+	_, err = hkdfExpandLabel(buff, hash, t.clientHandshakeTrafficSecret, "key", nil, keyLen)
 	if err != nil {
 		return err
 	}
 	t.clientHandshakeKey = append(t.clientHandshakeKey, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.serverHandshakeTrafficSecret, "key", nil, keyLen)
+	_, err = hkdfExpandLabel(buff, hash, t.serverHandshakeTrafficSecret, "key", nil, keyLen)
 	if err != nil {
 		return err
 	}
 	t.serverHandshakeKey = append(t.serverHandshakeKey, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.clientHandshakeTrafficSecret, "iv", nil, 12)
+	_, err = hkdfExpandLabel(buff, hash, t.clientHandshakeTrafficSecret, "iv", nil, 12)
 	if err != nil {
 		return err
 	}
 	t.clientHandshakeIV = append(t.clientHandshakeIV, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.serverHandshakeTrafficSecret, "iv", nil, 12)
+	_, err = hkdfExpandLabel(buff, hash, t.serverHandshakeTrafficSecret, "iv", nil, 12)
 	if err != nil {
 		return err
 	}
@@ -746,10 +747,7 @@ func (t *TLState) calculateHandshakeKeys() error {
 // calculateApplicationKeys derives the application traffic keys
 func (t *TLState) calculateApplicationKeys() error {
 
-	transcript := t.handshakeMessages.Bytes()
-	transcriptHash := sha256.Sum256(transcript)
-
-	emptyHash := sha256.Sum256(nil)
+	transcriptHash, hash := t.calculateTranscriptHash()
 
 	buff := byteBuffer.Get()
 	defer byteBuffer.Put(buff)
@@ -757,17 +755,18 @@ func (t *TLState) calculateApplicationKeys() error {
 	// derivedSecret
 	_, err := hkdfExpandLabel(
 		buff,
+		hash,
 		t.handshakeSecret,
 		"derived",
-		emptyHash[:], // empty context per RFC8446 §7.1
-		32,
+		hash.nullValue,
+		hash.size,
 	)
 	if err != nil {
 		return err
 	}
 
-	zeros := make([]byte, sha256.Size) // Escapes to heap
-	hkdfExtract(buff, zeros)
+	zeros := make([]byte, hash.size) // Escapes to heap
+	hkdfExtract(buff, hash, zeros)
 	masterSecret := make([]byte, buff.Len()) // Escapes to heap
 	copy(masterSecret, buff.B)
 
@@ -776,10 +775,11 @@ func (t *TLState) calculateApplicationKeys() error {
 	// t.clientApplicationTrafficSecret
 	_, err = hkdfExpandLabel(
 		buff,
+		hash,
 		masterSecret,
 		"c ap traffic",
-		transcriptHash[:],
-		32,
+		transcriptHash,
+		hash.size,
 	)
 	if err != nil {
 		return err
@@ -790,10 +790,11 @@ func (t *TLState) calculateApplicationKeys() error {
 	// t.serverApplicationTrafficSecret
 	_, err = hkdfExpandLabel(
 		buff,
+		hash,
 		masterSecret,
 		"s ap traffic",
-		transcriptHash[:],
-		32,
+		transcriptHash,
+		hash.size,
 	)
 	if err != nil {
 		return err
@@ -802,28 +803,28 @@ func (t *TLState) calculateApplicationKeys() error {
 	buff.Reset()
 
 	keyLen := t.cipher.KeyLen()
-	_, err = hkdfExpandLabel(buff, t.clientApplicationTrafficSecret, "key", nil, keyLen)
+	_, err = hkdfExpandLabel(buff, hash, t.clientApplicationTrafficSecret, "key", nil, keyLen)
 	if err != nil {
 		return err
 	}
 	t.clientApplicationKey = append(t.clientApplicationKey, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.serverApplicationTrafficSecret, "key", nil, keyLen)
+	_, err = hkdfExpandLabel(buff, hash, t.serverApplicationTrafficSecret, "key", nil, keyLen)
 	if err != nil {
 		return err
 	}
 	t.serverApplicationKey = append(t.serverApplicationKey, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.clientApplicationTrafficSecret, "iv", nil, 12)
+	_, err = hkdfExpandLabel(buff, hash, t.clientApplicationTrafficSecret, "iv", nil, 12)
 	if err != nil {
 		return err
 	}
 	t.clientApplicationIV = append(t.clientApplicationIV, buff.B...)
 	buff.Reset()
 
-	_, err = hkdfExpandLabel(buff, t.serverApplicationTrafficSecret, "iv", nil, 12)
+	_, err = hkdfExpandLabel(buff, hash, t.serverApplicationTrafficSecret, "iv", nil, 12)
 	if err != nil {
 		return err
 	}
@@ -1011,8 +1012,8 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 
 // Key derivation helper functions
 
-func hkdfExtract(saltInOut *byteBuffer.ByteBuffer, ikm []byte) ResponseState {
-	h := hmac.New(sha256.New, saltInOut.B)
+func hkdfExtract(saltInOut *byteBuffer.ByteBuffer, hash *HashSettings, ikm []byte) ResponseState {
+	h := hmac.New(hash.newFunc, saltInOut.B)
 	saltInOut.Reset()
 	h.Write(ikm)
 	saltInOut.Write(h.Sum(nil))
@@ -1020,7 +1021,7 @@ func hkdfExtract(saltInOut *byteBuffer.ByteBuffer, ikm []byte) ResponseState {
 	return Responded
 }
 
-func hkdfExpandLabel(out *byteBuffer.ByteBuffer, secret []byte, label string, context []byte, length int) (ResponseState, error) {
+func hkdfExpandLabel(out *byteBuffer.ByteBuffer, hash *HashSettings, secret []byte, label string, context []byte, length int) (ResponseState, error) {
 
 	// This isnt our actual output but we can temporarily use it here to avoid a heap escape
 	out.Write([]byte{
@@ -1035,7 +1036,7 @@ func hkdfExpandLabel(out *byteBuffer.ByteBuffer, secret []byte, label string, co
 	out.WriteByte(byte(len(context)))
 	out.Write(context)
 
-	expander := hkdf.Expand(sha256.New, secret, out.B)
+	expander := hkdf.Expand(hash.newFunc, secret, out.B)
 
 	out.Reset()
 	out.B = EnsureLen(out.B, length)
@@ -1046,4 +1047,10 @@ func hkdfExpandLabel(out *byteBuffer.ByteBuffer, secret []byte, label string, co
 	}
 
 	return Responded, nil
+}
+
+// Also returns hashSettings to save a few switch statements
+func (t *TLState) calculateTranscriptHash() (result []byte, hash *HashSettings) {
+	h := t.cipher.GetHash()
+	return h.Hash(t.handshakeMessages.B), h
 }

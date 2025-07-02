@@ -195,8 +195,6 @@ ciphers:
 					if nameType == 0 && pos+nameLen <= len(extData) {
 						// if the given name does not match any of our existing certificates, we fall back to 0 (our first certificate)
 						t.sniIndex = t.config.GetSNICertificateIndexByName(UnsafeString(extData[pos : pos+nameLen]))
-
-						log.Print(t.sniIndex)
 					}
 					pos += nameLen
 				}

@@ -182,6 +182,25 @@ ciphers:
 		extData := data.B[offset : offset+extLen]
 
 		switch extType {
+		case ExtensionServerName:
+			if len(extData) >= 2 && t.config.sni {
+				snLen := int(binary.BigEndian.Uint16(extData[0:2]))
+
+				pos := 2
+				for pos+3 < 2+snLen && pos+3 <= len(extData) {
+					nameType := extData[pos]
+					pos++
+					nameLen := int(binary.BigEndian.Uint16(extData[pos : pos+2]))
+					pos += 2
+					if nameType == 0 && pos+nameLen <= len(extData) {
+						// if the given name does not match any of our existing certificates, we fall back to 0 (our first certificate)
+						t.sniIndex = t.config.GetSNICertificateIndexByName(UnsafeString(extData[pos : pos+nameLen]))
+
+						log.Print(t.sniIndex)
+					}
+					pos += nameLen
+				}
+			}
 		case ExtensionSupportedVersions:
 			// extData[0] = length in bytes of the versions list
 			if len(extData) >= 1 {
@@ -227,7 +246,7 @@ ciphers:
 				sigAlgsLen := int(binary.BigEndian.Uint16(extData[0:2]))
 
 			signatures:
-				for _, want := range t.config.signatureSchemes {
+				for _, want := range t.config.GetCertificateAtIndex(t.sniIndex).signatureSchemes {
 					pos := 2
 					for pos+2 <= 2+sigAlgsLen && pos+2 <= len(extData) {
 						scheme := SignatureScheme(binary.BigEndian.Uint16(extData[pos : pos+2]))
@@ -442,7 +461,7 @@ func (t *TLState) generateCertificateRecord(out *byteBuffer.ByteBuffer) (Respons
 	buff := byteBuffer.Get()
 
 	// CertificateRecord doesn't change from connection to connection (i think), so we just precalculate it in our config
-	buff.Write(t.config.certificateRecord)
+	buff.Write(t.config.GetCertificateAtIndex(t.sniIndex).certificateRecord)
 
 	resp, err := t.BuildEncryptedHandshakeMessage(HandshakeTypeCertificate, buff)
 	if err != nil {
@@ -501,7 +520,7 @@ func (t *TLState) generateCertificateVerifyRecord(out *byteBuffer.ByteBuffer) (R
 	out.B = out.B[:outLength]
 	out.Write(toSign[:])
 
-	signature, err := t.config.parsedKey.Sign(rand.Reader, out.B[outLength:], options)
+	signature, err := t.config.GetCertificateAtIndex(t.sniIndex).parsedKey.Sign(rand.Reader, out.B[outLength:], options)
 	if err != nil {
 		return None, err
 	}

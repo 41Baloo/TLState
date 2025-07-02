@@ -32,3 +32,7 @@ func ZeroSlice(b []byte) {
 	}
 	memclrNoHeapPointers(unsafe.Pointer(&b[0]), uintptr(len(b)))
 }
+
+func UnsafeString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}

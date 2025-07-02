@@ -10,12 +10,14 @@ import (
 
 func main() {
 	// 1. Load your cert + key
-	cfg, err := TLState.ConfigFromFile("server.crt", "server.key")
+	certificate, err := TLState.CreateCertificateFromFile("server.crt", "server.key")
 	if err != nil {
 		panic(err)
 	}
 
-	// 2. Accept connections in plain TCP…
+	cfg := TLState.NewConfig(certificate)
+
+	// 2. Accept connections in plain TCP...
 	ln, _ := net.Listen("tcp", ":8443")
 	log.Println("TLState server listening via plain TCP on :8443")
 	for {
@@ -50,7 +52,7 @@ func handle(c net.Conn, cfg *TLState.Config) {
 		}
 		buf.Reset()
 
-		// Once handshake is done, decrypt incoming…
+		// Once handshake is done, decrypt incoming...
 		if state.IsHandshakeDone() {
 			for {
 				resp, _ := state.Read(buf)
@@ -62,7 +64,7 @@ func handle(c net.Conn, cfg *TLState.Config) {
 			if buf.Len() > 0 {
 				// buf.B now contains plaintext application data
 				log.Printf("%s => %s", c.RemoteAddr(), buf)
-				// …echo back encrypted
+				// echo back encrypted
 				state.Write(buf)
 				c.Write(buf.B)
 			}

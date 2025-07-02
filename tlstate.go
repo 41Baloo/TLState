@@ -14,6 +14,8 @@ import (
 )
 
 var (
+	ErrConfigNotInitialized = errors.New("the given config is not intialized yet")
+
 	ErrReadDuringHandshake         = errors.New("cannot read application data before completing handshake")
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
@@ -92,6 +94,8 @@ type TLState struct {
 
 	clientRandom []byte
 	sessionID    []byte
+
+	sniIndex uint32
 }
 
 var pool = &sync.Pool{
@@ -176,8 +180,14 @@ func Put(t *TLState) {
 	pool.Put(t)
 }
 
-func (t *TLState) SetConfig(config *Config) {
+func (t *TLState) SetConfig(config *Config) error {
+	if !config.initialised {
+		return ErrConfigNotInitialized
+	}
+
 	t.config = config
+
+	return nil
 }
 
 func (t *TLState) IsHandshakeDone() bool {

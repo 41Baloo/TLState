@@ -136,10 +136,13 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 func init() {
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 
-	config, err := TLState.ConfigFromFile("server.crt", "server.key")
+	certificate, err := TLState.CreateCertificateFromFile("server.crt", "server.key")
 	if err != nil {
 		panic(err)
 	}
+
+	config := TLState.NewConfig(certificate)
+
 	CONFIG = config
 }
 

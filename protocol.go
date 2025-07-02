@@ -466,6 +466,7 @@ enum {
 type Extension uint8
 
 const (
+	ExtensionServerName          Extension = 0
 	ExtensionSignatureAlgorithms Extension = 13
 	ExtensionSupportedVersions   Extension = 43
 	ExtensionKeyShare            Extension = 51

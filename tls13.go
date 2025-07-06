@@ -62,7 +62,7 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 			}
 
 		case RecordTypeAlert:
-			err := handleAlert(in.B)
+			err := t.handleAlert(in.B)
 			if err != nil {
 				return None, err
 			}
@@ -637,7 +637,7 @@ func (t *TLState) processEncryptedHandshake(in *byteBuffer.ByteBuffer, header []
 			return t.processClientFinished(plaintext)
 		}
 	case RecordTypeAlert:
-		return handleAlert(plaintext)
+		return t.handleAlert(plaintext)
 	default:
 		log.Warn().
 			Uint8("content_type", uint8(contentType)).
@@ -999,7 +999,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 			out.Write(plaintext)
 			return Responded, nil
 		case RecordTypeAlert:
-			err = handleAlert(plaintext)
+			err = t.handleAlert(plaintext)
 			if err != nil {
 				return None, err
 			}
@@ -1007,6 +1007,34 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 			log.Debug().Uint8("content_type", uint8(contentType)).Msg("Skipping non-application content type")
 		}
 	}
+}
+
+func (t *TLState) handleAlert(in []byte) error {
+	if len(in) < 2 {
+		return ErrMalformedAlert
+	}
+
+	level := AlertLevel(in[0])
+	description := AlertDescription(in[1])
+
+	if t.config.alertCallback != nil {
+		t.config.alertCallback(level, description)
+	}
+
+	// As a special case, we return EOF here to let users know the connection should never be read from again
+	// "This alert notifies the recipient that the sender will not send any more messages on this connection.
+	// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
+	if description == AlertDescriptionCloseNotify {
+		return io.EOF
+	}
+
+	// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
+	// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
+	if level == AlertLevelFatal {
+		return ErrFatalAlert
+	}
+
+	return nil
 }
 
 // Write application data into buff. Data in buff will be whiped. Read encrypted data from buff after function call

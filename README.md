@@ -1,6 +1,6 @@
 # TLState
 
-A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TLS support to any byte-oriented transport.
+A standalone, dependency-free **TLS 1.3** state machine for Go. Ideal for adding TLS support to any byte-oriented transport.
 
 ⚠️ **Experimental**: This project is under active development. There may be bugs, edge-case failures, and (possibly) insecure corner-cases. Use at your own risk.
 
@@ -8,32 +8,30 @@ A standalone, dependency-free TLS 1.3 state machine for Go—ideal for adding TL
 
 ## 📦 Features
 
+* **100% [RFC8446](https://datatracker.ietf.org/doc/html/rfc8446) Compliant**: Feel free to open an issue if you find non compliant behaviour
+* **Extremely performant**: Almost 2x faster than crypto/tls in some cases
 * **Pure state machine**: No built-in networking; you feed/send raw bytes.
 * **Zero heap allocations** in hot paths via buffer reuse.
-* **TLS 1.3 only**, supporting:
+* **Cipher Suites**:
 
-  * `TLS_CHACHA20_POLY1305_SHA256`
-  * `TLS_AES_128_GCM_SHA256`
-  * `TLS_AES_256_GCM_SHA384`
+	* `TLS_CHACHA20_POLY1305_SHA256`
+	* `TLS_AES_128_GCM_SHA256`
+	* `TLS_AES_256_GCM_SHA384`
 
----
+* **NamedGroups**:
 
-## ⚠️ Status & Caveats
+	* `X25519`
+	* `P-256` (aka: `secp256r1` / `prime256v1`)
 
-* **In Development**: APIs and internals will change without notice.
-* **First Crypto Project**: This is our first cryptographic project, so there may very well be some nasty hidden bugs.
-* **Non-standard Control Flow**: For more performance we make use of some pretty hacky optimizations
+* **SignatureSchemes**:
 
-  * Many functions write into pre-allocated buffers instead of returning values.
-  * **ResponseState** return values indicate whether a buffer got filled:
-
-    * `None` → nothing written / should not be used
-    * `Responded` → output is ready in your buffer
-  * Buffer parameters are (usually) named:
-
-    * `in` buffer will be used to read from
-    * `out` buffer will be used to output the result
-    * `inOut` buffer will both be used to read and output
+	* `ECDSA_SECP256R1_SHA256`
+	* `ECDSA_SECP384R1_SHA384`
+	* `ECDSA_SECP521R1_SHA512`
+	* `RSA_PSS_RSAE_SHA256`
+	* `RSA_PSS_RSAE_SHA384`
+	* `RSA_PSS_RSAE_SHA512`
+	* `ED25519`
 
 ---
 
@@ -142,7 +140,24 @@ func handle(c net.Conn, cfg *TLState.Config) {
 
 ## 📝 Contributing
 
-You are **very** welcome to contibute and to help us improve TLState. Simply open a PR.
+You are **very** welcome to contibute and to help us improve TLState. Simply open a PR. However, be aware thatwe make use of some pretty hacky optimizations:
+
+* Many functions write into pre-allocated buffers instead of returning values.
+
+* **Non-standard Control Flow**: For more performance we make use of some pretty hacky optimizations
+
+	* Many functions write into pre-allocated buffers instead of returning values.
+	* **ResponseState** return values indicate whether a buffer got filled:
+
+		* `None` → nothing written / should not be used
+		* `Responded` → output is ready in your buffer
+
+	* Buffer parameters are (usually) named:
+
+		* `in` buffer will be used to read from
+		* `out` buffer will be used to output the result
+		* `inOut` buffer will both be used to read and output
+
 
 
 > **Disclaimer:** TLState is still a work in progress. It is **not** ready for production use. Always validate security before deploying.

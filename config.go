@@ -165,8 +165,6 @@ func detectSignerAndScheme(key any) (crypto.Signer, []SignatureScheme, error) {
 	return nil, nil, ErrUnsupportedKeyType
 }
 
-type AlertCallback func(level AlertLevel, description AlertDescription)
-
 type Config struct {
 	sniNameToIndex map[string]uint32 // For performance we map each name to an index, so the state does not have to copy the name bytes
 	certificates   []*Certificate    // Holds every added certificate

@@ -1,12 +1,10 @@
 package TLState
 
 import (
-	"crypto/aes"
 	"crypto/cipher"
+	"encoding/binary"
 	"errors"
 	"sync"
-
-	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/41Baloo/TLState/byteBuffer"
 	ringBuffer "github.com/panjf2000/gnet/v2/pkg/pool/ringbuffer"
@@ -84,6 +82,7 @@ type TLState struct {
 
 	handshakeState HandshakeState
 
+	tls13      bool
 	namedGroup NamedGroup
 	cipher     CipherSuite
 	scheme     SignatureScheme
@@ -167,6 +166,7 @@ func Put(t *TLState) {
 	t.serverRecordCount = 0
 	t.clientRecordCount = 0
 
+	t.tls13 = false
 	t.namedGroup = 0
 	t.cipher = 0
 	t.scheme = 0
@@ -289,18 +289,176 @@ func (t *TLState) Write(buff *byteBuffer.ByteBuffer) error {
 	return nil
 }
 
-func (t *TLState) createAEAD(key []byte) (cipher.AEAD, error) {
-	switch t.cipher {
-	case TLS_CHACHA20_POLY1305_SHA256:
-		return chacha20poly1305.New(key)
-	case TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384:
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			return nil, err
+func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseState, error) {
+
+	for {
+
+		buffered := t.incoming.Buffered()
+		if buffered < 5 {
+			return None, nil
 		}
 
-		return cipher.NewGCM(block)
-	default:
-		return nil, ErrCipherNotImplemented
+		head, tail := t.incoming.Peek(5)
+		recType := RecordType(head[0])
+
+		b0 := GetHeadTail(2, head[1:], tail)
+		b1 := GetHeadTail(3, head[1:], tail)
+
+		length := int(binary.BigEndian.Uint16([]byte{b0, b1}))
+
+		if buffered < 5+length {
+			return None, nil
+		}
+
+		headerHead, headerTail := t.incoming.Peek(5)
+		t.incoming.Discard(5)
+
+		head, tail = t.incoming.Peek(length)
+		t.incoming.Discard(length)
+
+		// Instead of just writing the result into the buffer we can temporarily use it to get rid of 1 heap allocated slice
+		// We write recordData into the out buffer temporarily
+
+		// Preserve current length so we can skip back to it
+		outLength := out.Len()
+
+		out.Write(head)
+		out.Write(tail)
+
+		// This is getting really fucking hacky. Since we know the header is of length 5 and the clientIV is of length 12, we can
+		// just write to out and use windows to the backing slice instead, to avoid 2 heap allocs
+		cipherLength := out.Len()
+		cipherText := out.B[outLength:cipherLength]
+
+		out.Write(headerHead)
+		out.Write(headerTail)
+		additionalData := out.B[cipherLength:]
+
+		if recType != RecordTypeApplicationData {
+			log.Debug().Uint8("record_type", uint8(recType)).Msg("Skipping non-application-data record")
+			out.B = out.B[:outLength]
+			continue
+		}
+
+		out.Write(t.clientApplicationIV)
+		nonce := out.B[cipherLength+5:]
+
+		seq := make([]byte, 8)
+		binary.BigEndian.PutUint64(seq, t.clientRecordCount)
+		for i := 0; i < 8; i++ {
+			nonce[4+i] ^= seq[i]
+		}
+		t.clientRecordCount++
+
+		if t.clientCipher == nil {
+			aead, err := t.createAEAD(t.clientApplicationKey)
+			if err != nil {
+				out.B = out.B[:outLength]
+				return None, err
+			}
+			t.clientCipher = aead
+		}
+
+		// See tls13.go:encryptApplicationData to understand this hack better
+		fLength := out.Len()
+		out.B = EnsureLen(out.B, fLength+cipherLength+t.handshakeCipher.Overhead())
+
+		plaintext, err := t.clientCipher.Open(
+			out.B[fLength:fLength],
+			nonce,
+			cipherText,
+			additionalData,
+		)
+		if err != nil {
+			out.B = out.B[:outLength]
+			return None, err
+		}
+
+		if len(plaintext) == 0 {
+			log.Warn().Msg("Empty plaintext after decryption")
+			out.B = out.B[:outLength]
+			continue
+		}
+		contentType := RecordType(plaintext[len(plaintext)-1])
+		plaintext = plaintext[:len(plaintext)-1]
+
+		// Fullfilled its temporary use, now write the output by first resetting to original length and then appening
+		out.B = out.B[:outLength]
+
+		switch contentType {
+		case RecordTypeApplicationData:
+			out.Write(plaintext)
+			return Responded, nil
+		case RecordTypeAlert:
+			err = t.handleAlert(plaintext)
+			if err != nil {
+				return None, err
+			}
+		default:
+			log.Debug().Uint8("content_type", uint8(contentType)).Msg("Skipping non-application content type")
+		}
 	}
+}
+
+func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
+	return t.encryptRecord(buff, RecordTypeApplicationData)
+}
+
+// Data in buff will be whiped. Read encrypted data from buff after function call
+// buff.B may not be longer than 2^14
+func (t *TLState) encryptRecord(buff *byteBuffer.ByteBuffer, rType RecordType) error {
+	buff.WriteByte(byte(rType))
+
+	dataLength := buff.Len()
+
+	recordLength := dataLength + 16 // Add 16 for auth tag
+
+	buff.Write(t.serverApplicationIV)
+	nonce := buff.B[dataLength:]
+
+	buff.Write(marshallAdditionalData(recordLength))
+	additionalData := buff.B[dataLength+12:]
+
+	// XOR the last bytes with the record count
+	nonceCount := make([]byte, 8)
+	binary.BigEndian.PutUint64(nonceCount, t.serverRecordCount)
+	for i := 0; i < 8; i++ {
+		nonce[4+i] ^= nonceCount[i]
+	}
+	t.serverRecordCount++
+
+	if t.serverCipher == nil {
+		aead, err := t.createAEAD(t.serverApplicationKey)
+		if err != nil {
+			return err
+		}
+
+		t.serverCipher = aead
+	}
+
+	// This is our final input length. .Seal will write the ciphertext into the remaining space of our buffer and if needed, expand it.
+	// This saves us having to use a second buffer and should also fully eliminate heap allocations caused by .Seal
+	fLength := buff.Len()
+	// We want at least current length + data length + overhead, so .Seal never has to allocate
+	buff.B = EnsureLen(buff.B, fLength+dataLength+t.serverCipher.Overhead())
+
+	ciphertext := t.serverCipher.Seal(
+		buff.B[fLength:fLength],
+		nonce,
+		buff.B[:dataLength],
+		additionalData,
+	)
+
+	// At this point we have read everything we needed into our stack.
+	// We re-use our input buffer to return needed data.
+	// Ideally this would mean nothing gets pushed to heap, however calling aead.Seal
+	// automatically pushes everything to heap since it's an interface
+	buff.Reset()
+
+	// Sadly if we were to cut the plaintext from the start, we would loose len(plaintext) capacity from our buffer
+	// benchmarking makes it appear as if this is not a worthy traitoff, so we instead write additionalData to the buffer twice.
+	buff.Write(additionalData)
+	buff.Write(ciphertext)
+
+	return nil
 }

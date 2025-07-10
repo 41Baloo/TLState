@@ -61,14 +61,13 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	ctx.buff.Write(buf)
 
 	resp, err := ctx.state.Feed(ctx.buff)
-	if err != nil {
-		log.Println(err)
-		return gnet.Close
-	}
-
 	if resp == TLState.Responded {
 		c.Write(ctx.buff.B)
 		return gnet.None
+	}
+	if err != nil {
+		log.Println(err)
+		return gnet.Close
 	}
 
 	if !ctx.state.IsHandshakeDone() {
@@ -94,7 +93,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		return gnet.None
 	}
 
-	log.Printf("%s (%s -> %s) => %s", c.RemoteAddr(), ctx.state.GetSelectedNamedGroup().String(), ctx.state.GetSelectedCipher().String(), string(ctx.buff.B))
+	log.Printf("%s (%s -> %s) => %s", c.RemoteAddr(), ctx.state.GetSelectedNamedGroup().String(), ctx.state.GetSelectedCipher().String(), TLState.UnsafeString(ctx.buff.B))
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {

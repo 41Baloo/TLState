@@ -63,14 +63,12 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	ctx.buff.Write(buf)
 
 	resp, err := ctx.state.Feed(ctx.buff)
-	if err != nil {
-		log.Println("Failed to feed", err)
-		return gnet.Close
-	}
-
 	if resp == TLState.Responded {
 		c.Write(ctx.buff.B)
-		return gnet.None
+	}
+	if err != nil {
+		log.Printf("Feed error: %s", err.Error())
+		return gnet.Close
 	}
 
 	if !ctx.state.IsHandshakeDone() {
@@ -83,11 +81,12 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to batch a single response
 		resp, err = ctx.state.Read(ctx.buff)
 		if err != nil {
-			if err == io.EOF {
-				log.Println("Client requested to close connection")
-				return gnet.Close
+			if ctx.buff.Len() != 0 {
+				c.Write(ctx.buff.B)
 			}
-			log.Println("Read error", err)
+			if err != io.EOF {
+				log.Printf("Read error: %s", err.Error())
+			}
 			return gnet.Close
 		}
 
@@ -106,7 +105,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		if err == io.ErrUnexpectedEOF {
 			return gnet.None
 		}
-		log.Println("Failed to Read Request", err)
+		log.Printf("Failed to read request: %s", err.Error())
 		return gnet.Close
 	}
 
@@ -123,7 +122,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {
-		log.Println("Failed to write", err)
+		log.Printf("Write error: %s", err.Error())
 		return gnet.Close
 	}
 

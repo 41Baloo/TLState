@@ -63,10 +63,8 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 	resp, err := ctx.state.Feed(ctx.buff)
 	if resp == TLState.Responded {
 		c.Write(ctx.buff.B)
-		return gnet.None
 	}
 	if err != nil {
-		log.Println(err)
 		return gnet.Close
 	}
 
@@ -80,8 +78,11 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		// Since Read does not replace but append, we can call it repeatetly until we read all packets, to batch a single response
 		resp, err = ctx.state.Read(ctx.buff)
 		if err != nil {
-			log.Println(err)
-			return gnet.None
+			if ctx.buff.Len() != 0 {
+				c.Write(ctx.buff.B)
+			}
+
+			return gnet.Close
 		}
 
 		if resp != TLState.Responded {

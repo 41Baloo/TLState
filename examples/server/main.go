@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net"
 
@@ -47,28 +48,51 @@ func handle(c net.Conn, cfg *TLState.Config) {
 		buf.Write(tmp[:n])
 
 		// Process handshake or pass-through
-		if resp, _ := state.Feed(buf); resp == TLState.Responded {
+		resp, err := state.Feed(buf)
+		if resp == TLState.Responded { // First check for response status
+			c.Write(buf.B)
+		}
+		if err != nil { // The handle errors
+			if err != io.EOF {
+				log.Printf("Error Feeding: %s", err.Error())
+			}
+			c.Close()
+			return
+		}
+		buf.Reset()
+
+		if !state.IsHandshakeDone() {
+			continue
+		}
+
+		// Once handshake is done, decrypt incoming...
+		for {
+			resp, err := state.Read(buf)
+			if err != nil {
+				if buf.Len() != 0 {
+					// Respond with leftover responded data before bailing
+					c.Write(buf.B)
+				}
+				log.Printf("Error Reading: %s", err.Error())
+				return
+			}
+			if resp != TLState.Responded {
+				break
+			}
+		}
+
+		if buf.Len() > 0 {
+			// buf.B now contains plaintext application data
+			log.Printf("%s => %s", c.RemoteAddr(), buf)
+			// echo back encrypted
+			err := state.Write(buf)
+			if err != nil {
+				log.Printf("Error Writing: %s", err.Error())
+				return
+			}
 			c.Write(buf.B)
 		}
 		buf.Reset()
 
-		// Once handshake is done, decrypt incoming...
-		if state.IsHandshakeDone() {
-			for {
-				resp, _ := state.Read(buf)
-				if resp != TLState.Responded {
-					break
-				}
-			}
-
-			if buf.Len() > 0 {
-				// buf.B now contains plaintext application data
-				log.Printf("%s => %s", c.RemoteAddr(), buf)
-				// echo back encrypted
-				state.Write(buf)
-				c.Write(buf.B)
-			}
-			buf.Reset()
-		}
 	}
 }

@@ -13,20 +13,23 @@ import (
 
 var (
 	ErrConfigNotInitialized = errors.New("the given config is not intialized yet")
+	ErrStateClosed          = errors.New("attempted to use closed state")
 
 	ErrReadDuringHandshake         = errors.New("cannot read application data before completing handshake")
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
 
-	ErrHandshakeKeysSetupFailure = errors.New("failed to setup handshake keys")
+	ErrInvalidX25519MLKEM768Keyshare = errors.New("invalid X25519MLKEM768 key share")
 
 	ErrTLS13NotSupported       = errors.New("client does not support TLS 1.3")                      // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
 	ErrNamedGroupsNotSupported = errors.New("client does not support our given namedGroups/curves") // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 	ErrCiphersNotSupported     = errors.New("client does not support our given ciphers")            // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 	ErrSchemesNotSupported     = errors.New("client does not support our signature(s)")             // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 
-	ErrMalformedAlert = errors.New("client sent a malformed alert")
-	ErrFatalAlert     = errors.New("client has sent a fatal alert")
+	ErrUnknownRecordType              = errors.New("unknown record type")
+	ErrApplicationDataDuringHandshake = errors.New("application data received during handshake")
+	ErrMalformedAlert                 = errors.New("client sent a malformed alert")
+	ErrFatalAlert                     = errors.New("client has sent a fatal alert")
 )
 
 type HandshakeState uint8
@@ -60,6 +63,7 @@ type TLState struct {
 	privateKey    []byte
 	publicKey     []byte
 	peerPublicKey []byte
+	mlkemSecret   []byte // Only used for X25519MLKEM768
 
 	handshakeSecret                []byte
 	clientHandshakeTrafficSecret   []byte
@@ -95,6 +99,7 @@ type TLState struct {
 	sessionID    []byte
 
 	sniIndex uint32
+	closed   bool // If the connection is considered closed, we can no longer do anything.
 }
 
 var pool = &sync.Pool{
@@ -104,8 +109,9 @@ var pool = &sync.Pool{
 			handshakeMessages: byteBuffer.Get(),
 
 			privateKey:    make([]byte, 0, 32),
-			publicKey:     make([]byte, 0, 64),
-			peerPublicKey: make([]byte, 0, 64),
+			publicKey:     make([]byte, 0, 1120),
+			peerPublicKey: make([]byte, 0, 1216),
+			mlkemSecret:   make([]byte, 0, 32),
 
 			handshakeSecret:                make([]byte, 0, 32),
 			clientHandshakeTrafficSecret:   make([]byte, 0, 32),
@@ -144,6 +150,7 @@ func Put(t *TLState) {
 	t.handshakeState = HandshakeStateInitial
 
 	t.peerPublicKey = t.peerPublicKey[:0]
+	t.mlkemSecret = t.mlkemSecret[:0]
 
 	t.handshakeSecret = t.handshakeSecret[:0]
 	t.clientHandshakeTrafficSecret = t.clientHandshakeTrafficSecret[:0]
@@ -176,6 +183,7 @@ func Put(t *TLState) {
 	t.handshakeCipher = nil
 
 	t.config = nil
+	t.closed = false
 
 	pool.Put(t)
 }
@@ -222,8 +230,17 @@ func (t *TLState) GetServerRecordCount() uint64 {
 	return t.serverRecordCount
 }
 
+func (t *TLState) IsClosed() bool {
+	return t.closed
+}
+
 // Will read data from "inOut" buffer. If the ResponseState is "Responded", "inOut" will include data you need to send to the client
 func (t *TLState) Feed(inOut *byteBuffer.ByteBuffer) (ResponseState, error) {
+
+	if t.closed {
+		return None, ErrStateClosed
+	}
+
 	t.incoming.Write(inOut.B)
 
 	if t.handshakeState != HandshakeStateDone {
@@ -245,6 +262,11 @@ func (t *TLState) Read(out *byteBuffer.ByteBuffer) (ResponseState, error) {
 
 // Write application data into buff. Data in buff will be replaced with encrypted data
 func (t *TLState) Write(buff *byteBuffer.ByteBuffer) error {
+
+	if t.closed {
+		return ErrStateClosed
+	}
+
 	if t.handshakeState != HandshakeStateDone {
 		return ErrReadDuringHandshake
 	}

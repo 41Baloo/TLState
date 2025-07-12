@@ -184,7 +184,7 @@ func NewConfig(certificate *Certificate) *Config {
 		certificates:   []*Certificate{},
 
 		ciphers:     []CipherSuite{TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, TLS_AES_256_GCM_SHA384},
-		namedGroups: []NamedGroup{NamedGroupX25519, NamedGroupP256},
+		namedGroups: []NamedGroup{NamedGroupX25519MLKEM768, NamedGroupX25519, NamedGroupP256, NamedGroupP384, NamedGroupP521},
 
 		sni:         false,
 		initialised: certificate != nil,

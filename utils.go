@@ -3,7 +3,9 @@ package TLState
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/hmac"
+	"crypto/mlkem"
 	"crypto/rand"
 	"io"
 	"unsafe"
@@ -107,10 +109,30 @@ func (t *TLState) setupHandshakeKeys() error {
 	if err != nil {
 		return err
 	}
+	t.privateKey = append(t.privateKey, privateKey.Bytes()...)
 
 	publicKey := privateKey.PublicKey()
 
-	t.privateKey = append(t.privateKey, privateKey.Bytes()...)
+	if t.namedGroup != NamedGroupX25519MLKEM768 {
+		t.publicKey = append(t.publicKey, publicKey.Bytes()...)
+		return nil
+	}
+
+	if len(t.peerPublicKey) != mlkem.EncapsulationKeySize768+X25519_PUBLIC_KEY_SIZE {
+		return ErrInvalidX25519MLKEM768Keyshare
+	}
+
+	mlkemEncapKey := t.peerPublicKey[:mlkem.EncapsulationKeySize768]
+
+	k, err := mlkem.NewEncapsulationKey768(mlkemEncapKey)
+	if err != nil {
+		return err
+	}
+	mlkemSecret, mlkemCiphertext := k.Encapsulate()
+
+	t.mlkemSecret = append(t.mlkemSecret, mlkemSecret...)
+
+	t.publicKey = append(t.publicKey, mlkemCiphertext...)
 	t.publicKey = append(t.publicKey, publicKey.Bytes()...)
 
 	return nil
@@ -125,14 +147,32 @@ func (t *TLState) calculateHandshakeKeys() error {
 		return err
 	}
 
-	pPublicKey, err := curve.NewPublicKey(t.peerPublicKey)
-	if err != nil {
-		return err
-	}
+	var pPublicKey *ecdh.PublicKey
+	var sharedSecret []byte = make([]byte, 0, 32)
 
-	sharedSecret, err := privateKey.ECDH(pPublicKey)
-	if err != nil {
-		return err
+	if t.namedGroup != NamedGroupX25519MLKEM768 {
+		pPublicKey, err = curve.NewPublicKey(t.peerPublicKey)
+		if err != nil {
+			return err
+		}
+
+		sharedSecret, err = privateKey.ECDH(pPublicKey)
+		if err != nil {
+			return err
+		}
+	} else {
+		pPublicKey, err = curve.NewPublicKey(t.peerPublicKey[mlkem.EncapsulationKeySize768:])
+		if err != nil {
+			return err
+		}
+
+		x25519SharedSecret, err := privateKey.ECDH(pPublicKey)
+		if err != nil {
+			return err
+		}
+
+		sharedSecret = append(sharedSecret, t.mlkemSecret...)
+		sharedSecret = append(sharedSecret, x25519SharedSecret...)
 	}
 
 	transcriptHash, hash := t.calculateTranscriptHash()

@@ -178,6 +178,7 @@ func (t *TLState) handleAlert(in []byte) error {
 	// https://datatracker.ietf.org/doc/html/rfc8446#section-6.2
 	// "Upon transmission or receipt of a fatal alert message, both parties MUST immediately close the connection"
 	if level == AlertLevelFatal {
+		t.closed = true
 		return ErrFatalAlert
 	}
 
@@ -185,6 +186,11 @@ func (t *TLState) handleAlert(in []byte) error {
 }
 
 func (t *TLState) BuildAlert(level AlertLevel, desc AlertDescription, out *byteBuffer.ByteBuffer) error {
+
+	if level == AlertLevelFatal {
+		t.closed = true
+	}
+
 	out.WriteByte(byte(level))
 	out.WriteByte(byte(desc))
 

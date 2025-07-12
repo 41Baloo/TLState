@@ -178,7 +178,9 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 			if t.handshakeState >= HandshakeStateServerHelloDone {
 				return None, t.processEncryptedHandshake(in, rawHeader)
 			} else {
-				log.Warn().Int("State", int(t.handshakeState)).Msg("Received unexpected application data during early handshake")
+				in.Reset()
+				t.BuildAlert(AlertLevelFatal, AlertDescriptionUnexpectedMessage, in)
+				return Responded, ErrApplicationDataDuringHandshake
 			}
 
 		case RecordTypeAlert:
@@ -188,7 +190,9 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 			}
 
 		default:
-			log.Warn().Uint8("record_type", uint8(recType)).Msg("Unknown record type")
+			in.Reset()
+			t.BuildAlert(AlertLevelFatal, AlertDescriptionUnexpectedMessage, in)
+			return Responded, ErrUnknownRecordType
 		}
 	}
 
@@ -468,8 +472,8 @@ ciphers:
 
 	err := t.setupHandshakeKeys()
 	if err != nil {
-		t.BuildAlert(AlertLevelFatal, AlertDescriptionHandshakeFailure, out)
-		return Responded, ErrHandshakeKeysSetupFailure
+		t.BuildAlert(AlertLevelFatal, AlertDescriptionIllegalParameter, out)
+		return Responded, err
 	}
 
 	if t.scheme == 0 {
@@ -495,6 +499,9 @@ func (t *TLState) generateServerResponse(out *byteBuffer.ByteBuffer) (ResponseSt
 	err = t.calculateHandshakeKeys()
 	if err != nil {
 		return None, nil
+		out.Reset()
+		t.BuildAlert(AlertLevelFatal, AlertDescriptionIllegalParameter, out)
+		return Responded, err
 	}
 
 	t.generateChangeCipherSpec(out)

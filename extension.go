@@ -1,8 +1,6 @@
 package TLState
 
 import (
-	"encoding/binary"
-
 	"github.com/41Baloo/TLState/byteBuffer"
 )
 
@@ -42,124 +40,6 @@ const (
 	ExtensionSupportedVersions   Extension = 43
 	ExtensionKeyShare            Extension = 51
 )
-
-func (t *TLState) handleExtension(extension Extension, data []byte) {
-	switch extension {
-	case ExtensionServerName:
-		t.handleServerName(data)
-	case ExtensionSignatureAlgorithms:
-		t.handleSignatureAlgorithms(data)
-	case ExtensionSupportedVersions:
-		t.handleSupportedVersions(data)
-	case ExtensionKeyShare:
-		t.handleKeyShare(data)
-	}
-}
-
-func (t *TLState) handleServerName(data []byte) {
-
-	dataLen := len(data)
-
-	if dataLen < 2 || !t.config.sni {
-		return
-	}
-
-	snLen := int(binary.BigEndian.Uint16(data[0:2]))
-
-	pos := 2
-	for pos+3 < 2+snLen && pos+3 <= dataLen {
-		nameType := data[pos]
-
-		pos++
-		nameLen := int(binary.BigEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if nameType == 0 && pos+nameLen <= dataLen {
-			// if the given name does not match any of our existing certificates, we fall back to 0 (our first certificate)
-			t.sniIndex = t.config.GetSNICertificateIndexByName(UnsafeString(data[pos : pos+nameLen]))
-		}
-		pos += nameLen
-	}
-
-}
-
-func (t *TLState) handleSignatureAlgorithms(data []byte) {
-
-	dataLen := len(data)
-
-	if dataLen < 2 {
-		return
-	}
-
-	sigAlgsLen := int(binary.BigEndian.Uint16(data[0:2]))
-
-	for _, want := range t.config.GetCertificateAtIndex(t.sniIndex).signatureSchemes {
-		pos := 2
-		for pos+2 <= 2+sigAlgsLen && pos+2 <= dataLen {
-			scheme := SignatureScheme(binary.BigEndian.Uint16(data[pos : pos+2]))
-			if scheme == want {
-				t.scheme = scheme
-				return
-			}
-			pos += 2
-		}
-	}
-
-}
-
-func (t *TLState) handleSupportedVersions(data []byte) {
-
-	dataLen := len(data)
-
-	if dataLen < 1 {
-		return
-	}
-
-	listLen := int(data[0])
-
-	if !(listLen%2 == 0 && 1+listLen <= dataLen) {
-		return
-	}
-
-	for i := 0; i < listLen; i += 2 {
-		ver := binary.BigEndian.Uint16(data[1+i : 1+i+2])
-		if ver != TLS13Version {
-			continue
-		}
-
-		t.tls13 = true
-		return
-	}
-
-}
-
-func (t *TLState) handleKeyShare(data []byte) {
-
-	dataLen := len(data)
-
-	if dataLen < 2 {
-		return
-	}
-
-	ksLen := int(binary.BigEndian.Uint16(data[0:2]))
-
-	for _, want := range t.config.namedGroups {
-		pos := 2
-		for pos+4 <= 2+ksLen && pos+4 <= dataLen {
-			group := NamedGroup(binary.BigEndian.Uint16(data[pos : pos+2]))
-			keyLen := int(binary.BigEndian.Uint16(data[pos+2 : pos+4]))
-			pos += 4
-			if pos+keyLen > dataLen {
-				break
-			}
-			if group == want {
-				t.peerPublicKey = append(t.peerPublicKey, data[pos:pos+keyLen]...)
-				t.namedGroup = group
-				return
-			}
-			pos += keyLen
-		}
-	}
-}
 
 // Will write ServerHelloExtensions to out
 func (t *TLState) generateServerHelloExtensions(out *byteBuffer.ByteBuffer) ResponseState {

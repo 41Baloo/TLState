@@ -74,46 +74,11 @@ func (t *TLState) BuildHandshakeMessage(msgType HandshakeType, inOut *byteBuffer
 
 	t.handshakeMessages.Write(inOut.B)
 
-	inOut.WriteByte(byte(RecordTypeHandshake))
-
-	// Create additional data (record header)
-	messageLength := inOut.Len()
-	recordLength := messageLength + 16 // Add 16 for auth tag
-
-	inOut.Write(t.serverHandshakeIV)
-	nonce := inOut.B[messageLength:]
-
-	inOut.Write(marshallAdditionalData(recordLength))
-	additionalData := inOut.B[messageLength+12:]
-
-	nonceCount := make([]byte, 8)
-	binary.BigEndian.PutUint64(nonceCount, t.serverRecordCount)
-	for i := 0; i < 8; i++ {
-		nonce[4+i] ^= nonceCount[i]
+	err := t.encryptRecord(inOut, RecordTypeHandshake)
+	if err == nil {
+		return Responded, nil
 	}
-	t.serverRecordCount++
-
-	if t.handshakeCipher == nil {
-		aead, err := t.createAEAD(t.serverHandshakeKey)
-		if err != nil {
-			return None, err
-		}
-
-		t.handshakeCipher = aead
-	}
-
-	// See tlstate.go:encryptRecord to understand this hack better
-	fLength := inOut.Len()
-	inOut.B = EnsureLen(inOut.B, fLength+messageLength+t.handshakeCipher.Overhead())
-
-	ciphertext := t.handshakeCipher.Seal(inOut.B[fLength:fLength], nonce, inOut.B[:messageLength], additionalData)
-
-	// No longer need the input, time to replace it with the output.
-	inOut.Reset()
-	inOut.Write(additionalData)
-	inOut.Write(ciphertext)
-
-	return Responded, nil
+	return None, err
 }
 
 // will use the contents of "inOut" buffer and replace them with a handshakeMessage

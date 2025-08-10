@@ -114,7 +114,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	ctx.buff.Reset()
 
-	log.Info().Str("IP", c.RemoteAddr().String()).Str("UserAgent", req.Header.Get("User-Agent")).Str("Path", req.URL.Path)
+	log.Info().Str("IP", c.RemoteAddr().String()).Str("UserAgent", req.Header.Get("User-Agent")).Str("Path", req.URL.Path).Msg("Incoming HTTPS Request")
 
 	switch req.URL.Path {
 	case "/":

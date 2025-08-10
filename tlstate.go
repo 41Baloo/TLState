@@ -287,6 +287,7 @@ func (t *TLState) Write(buff *byteBuffer.ByteBuffer) error {
 	buff.B = buff.B[:MaxTLSRecordSize]
 
 	inBuff := byteBuffer.Get()
+	defer byteBuffer.Put(inBuff)
 
 	for off := -MaxTLSRecordSize; off < buffLen; off += MaxTLSRecordSize {
 		end := off + MaxTLSRecordSize

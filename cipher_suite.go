@@ -86,6 +86,26 @@ const (
 	TLS_AES_128_CCM_8_SHA256 // CCM not implemented
 )
 
+func GetCipherSuiteOrderedSecure() []CipherSuite {
+	return []CipherSuite{
+		TLS_AES_256_GCM_SHA384,
+		TLS_CHACHA20_POLY1305_SHA256,
+		TLS_AES_128_GCM_SHA256,
+	}
+}
+
+func GetCipherSuiteOrderedPerformance() []CipherSuite {
+	return []CipherSuite{
+		TLS_AES_128_GCM_SHA256,
+		TLS_CHACHA20_POLY1305_SHA256,
+		TLS_AES_256_GCM_SHA384,
+	}
+}
+
+func GetCipherSuiteDefault() []CipherSuite {
+	return GetCipherSuiteOrderedPerformance()
+}
+
 func (c CipherSuite) GetHash() *HashSettings {
 	switch c {
 	case TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256:

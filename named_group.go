@@ -2,6 +2,7 @@ package TLState
 
 import (
 	"crypto/ecdh"
+	"crypto/mlkem"
 )
 
 const (
@@ -37,7 +38,7 @@ type NamedGroup uint16
 const (
 	NamedGroupP256 NamedGroup = 0x0017 // aka secp256r1 or prime256v1
 	NamedGroupP384 NamedGroup = 0x0018 // aka secp384r1
-	NamedGroupP521 NamedGroup = 0x0019 // aka secp512r1
+	NamedGroupP521 NamedGroup = 0x0019 // aka secp521r1
 
 	NamedGroupX25519 NamedGroup = 0x001D
 
@@ -52,6 +53,36 @@ const (
 	*/
 	NamedGroupX25519MLKEM768 NamedGroup = 0x11EC
 )
+
+func GetNamedGroupOrderedSecure() []NamedGroup {
+	return []NamedGroup{
+		NamedGroupX25519MLKEM768,
+		NamedGroupP521,
+		NamedGroupP384,
+		NamedGroupX25519,
+		NamedGroupP256,
+	}
+}
+
+func GetNamedGroupOrderedPerformance() []NamedGroup {
+	return []NamedGroup{
+		NamedGroupX25519,
+		NamedGroupP256,
+		NamedGroupX25519MLKEM768,
+		NamedGroupP384,
+		NamedGroupP521,
+	}
+}
+
+func GetNamedGroupDefault() []NamedGroup {
+	return []NamedGroup{
+		NamedGroupX25519MLKEM768,
+		NamedGroupX25519,
+		NamedGroupP256,
+		NamedGroupP384,
+		NamedGroupP521,
+	}
+}
 
 func (n NamedGroup) ToBytes() []byte {
 	return []byte{byte(n >> 8), byte(n & 0xFF)}
@@ -109,13 +140,15 @@ func (n NamedGroup) String() string {
 func (n NamedGroup) SizeBytes() int {
 	switch n {
 	case NamedGroupP256:
-		return 32
+		return 1 + 32*2
 	case NamedGroupP384:
-		return 48
+		return 1 + 48*2
 	case NamedGroupP521:
-		return 66
-	case NamedGroupX25519, NamedGroupX25519MLKEM768:
+		return 1 + 66*2
+	case NamedGroupX25519:
 		return X25519_PUBLIC_KEY_SIZE
+	case NamedGroupX25519MLKEM768:
+		return mlkem.EncapsulationKeySize768 + X25519_PUBLIC_KEY_SIZE
 	default:
 		panic("unsupported named group")
 	}

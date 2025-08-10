@@ -6,13 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"os"
 	"runtime"
+	"time"
 
 	"github.com/41Baloo/TLState"
 	"github.com/41Baloo/TLState/byteBuffer"
 	"github.com/panjf2000/gnet/v2"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type HTTPServer struct {
@@ -33,7 +36,7 @@ func (s *HTTPServer) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
 
 	state, err := TLState.Get()
 	if err != nil {
-		log.Println("Failed to Get state", err)
+		log.Error().Err(err).Msg("Failed to get state")
 		return nil, gnet.Close
 	}
 
@@ -67,7 +70,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		c.Write(ctx.buff.B)
 	}
 	if err != nil {
-		log.Printf("Feed error: %s", err.Error())
+		log.Error().Err(err).Msg("Feed error")
 		return gnet.Close
 	}
 
@@ -85,7 +88,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 				c.Write(ctx.buff.B)
 			}
 			if err != io.EOF {
-				log.Printf("Read error: %s", err.Error())
+				log.Error().Err(err).Msg("Read error")
 			}
 			return gnet.Close
 		}
@@ -105,13 +108,13 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		if err == io.ErrUnexpectedEOF {
 			return gnet.None
 		}
-		log.Printf("Failed to read request: %s", err.Error())
+		log.Error().Err(err).Msg("Failed to read request")
 		return gnet.Close
 	}
 
 	ctx.buff.Reset()
 
-	log.Printf("%s is requesting '%s' with useragent '%s'", c.RemoteAddr(), req.URL.Path, req.Header.Get("User-Agent"))
+	log.Info().Str("IP", c.RemoteAddr().String()).Str("UserAgent", req.Header.Get("User-Agent")).Str("Path", req.URL.Path)
 
 	switch req.URL.Path {
 	case "/":
@@ -122,7 +125,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 
 	err = ctx.state.Write(ctx.buff)
 	if err != nil {
-		log.Printf("Write error: %s", err.Error())
+		log.Error().Err(err).Msg("Failed to write")
 		return gnet.Close
 	}
 
@@ -133,6 +136,15 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 }
 
 func init() {
+
+	log.Logger = zerolog.New(zerolog.ConsoleWriter{
+		Out:        os.Stdout,
+		TimeFormat: "15:04:05",
+	}).With().Timestamp().Caller().Logger()
+
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 
 	certificate, err := TLState.CreateCertificateFromFile("server.crt", "server.key")
@@ -155,5 +167,10 @@ func main() {
 
 	hs := &HTTPServer{addr: fmt.Sprintf("tcp://:%d", port), multicore: multicore}
 
-	log.Println("server exits:", gnet.Run(hs, hs.addr, gnet.WithMulticore(multicore)))
+	log.Info().Err(gnet.Run(hs, hs.addr, []gnet.Option{
+		gnet.WithMulticore(true),
+		gnet.WithReusePort(true),
+		gnet.WithReuseAddr(true),
+		gnet.WithTCPKeepAlive(1 * time.Minute),
+	}...)).Msg("Server Exits")
 }

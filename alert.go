@@ -172,6 +172,7 @@ func (t *TLState) handleAlert(in []byte) error {
 	// "This alert notifies the recipient that the sender will not send any more messages on this connection.
 	// Any data received after a closure alert has been received MUST be ignored" ~ https://datatracker.ietf.org/doc/html/rfc8446#section-6.1
 	if description == AlertDescriptionCloseNotify {
+		t.closed = true
 		return io.EOF
 	}
 
@@ -194,7 +195,7 @@ func (t *TLState) BuildAlert(level AlertLevel, desc AlertDescription, out *byteB
 	out.WriteByte(byte(level))
 	out.WriteByte(byte(desc))
 
-	if t.handshakeState < HandshakeStateServerHelloDone {
+	if t.handshakeState < HandshakeStateSentServerFlight {
 		BuildRecordMessage(RecordTypeAlert, out)
 		return nil
 	}

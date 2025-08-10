@@ -68,7 +68,7 @@ func (t *TLState) BuildHandshakeMessage(msgType HandshakeType, inOut *byteBuffer
 
 	marshallHandshake(msgType, inOut)
 
-	if t.handshakeState < HandshakeStateServerHelloDone {
+	if t.handshakeState < HandshakeStateSentServerFlight {
 		return BuildRecordMessage(RecordTypeHandshake, inOut), nil
 	}
 
@@ -175,7 +175,7 @@ func (t *TLState) processHandshake(in *byteBuffer.ByteBuffer) (ResponseState, er
 			return t.processHandshakeMessage(in)
 
 		case RecordTypeApplicationData:
-			if t.handshakeState >= HandshakeStateServerHelloDone {
+			if t.handshakeState >= HandshakeStateSentServerFlight {
 				return None, t.processEncryptedHandshake(in, rawHeader)
 			} else {
 				in.Reset()
@@ -218,10 +218,15 @@ func (t *TLState) processHandshakeMessage(out *byteBuffer.ByteBuffer) (ResponseS
 		t.handshakeMessages.Write(out.B[:4+length])
 		out.B = out.B[4 : 4+length]
 
-		return t.processClientHello(out)
+		if t.handshakeState == HandshakeStateInitial {
+			return t.processClientHello(out)
+		}
+
+		fallthrough
 	default:
-		log.Warn().Uint8("handshake_type", msgType).Msg("Unexpected handshake message type")
-		return None, nil
+		out.Reset()
+		t.BuildAlert(AlertLevelFatal, AlertDescriptionUnexpectedMessage, out)
+		return Responded, ErrUnexpectedMessage
 	}
 }
 
@@ -288,6 +293,11 @@ func (t *TLState) processClientHello(out *byteBuffer.ByteBuffer) (ResponseState,
 
 	// SessionID
 	sessionIDLength := int(out.B[34])
+	if sessionIDLength > 32 {
+		out.Reset()
+		t.BuildAlert(AlertLevelFatal, AlertDescriptionIllegalParameter, out)
+		return Responded, ErrInvalidSessionId
+	}
 	if dataLen < 35+sessionIDLength {
 		return None, nil
 	}
@@ -441,6 +451,13 @@ ciphers:
 						break
 					}
 					if group == want {
+
+						if want.SizeBytes() < keyLen {
+							out.Reset()
+							t.BuildAlert(AlertLevelFatal, AlertDescriptionIllegalParameter, out)
+							return Responded, ErrInvalidKeyshareLength
+						}
+
 						t.peerPublicKey = append(t.peerPublicKey, data[pos:pos+keyLen]...)
 						t.namedGroup = group
 						goto exDone
@@ -460,7 +477,6 @@ ciphers:
 
 	if !t.tls13 {
 		t.BuildAlert(AlertLevelFatal, AlertDescriptionProtocolVersion, out)
-		log.Warn().Msg("Client does not support TLS 1.3")
 		return Responded, ErrTLS13NotSupported
 	}
 
@@ -481,8 +497,6 @@ ciphers:
 		return Responded, ErrSchemesNotSupported
 	}
 
-	t.handshakeState = HandshakeStateClientHelloDone
-
 	return t.generateServerResponse(out)
 }
 
@@ -498,7 +512,6 @@ func (t *TLState) generateServerResponse(out *byteBuffer.ByteBuffer) (ResponseSt
 
 	err = t.calculateHandshakeKeys()
 	if err != nil {
-		return None, nil
 		out.Reset()
 		t.BuildAlert(AlertLevelFatal, AlertDescriptionIllegalParameter, out)
 		return Responded, err
@@ -552,7 +565,10 @@ func (t *TLState) generateServerHello(out *byteBuffer.ByteBuffer) (ResponseState
 
 	t.BuildHandshakeMessage(HandshakeTypeServerHello, out)
 
-	t.handshakeState = HandshakeStateServerHelloDone
+	// Pitfall: realistically this will not be set for long
+	// since we almost instantly after this function call
+	// "generateFinishedRecord", which sets another handshakeState
+	t.handshakeState = HandshakeStateSentServerFlight
 
 	return Responded, nil
 }
@@ -722,15 +738,7 @@ func (t *TLState) processClientFinished(data []byte) error {
 		return nil
 	}
 
-	msgType := HandshakeType(data[0])
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-
-	if msgType != HandshakeTypeFinished {
-		log.Warn().
-			Uint8("msg_type", uint8(msgType)).
-			Msg("Expected Finished message, got something else")
-		return nil
-	}
 
 	if len(data) < int(4+length) {
 		return nil
@@ -757,7 +765,10 @@ func (t *TLState) processClientFinished(data []byte) error {
 	}
 	byteBuffer.Put(buff)
 
-	t.calculateApplicationKeys()
+	err = t.calculateApplicationKeys()
+	if err != nil {
+		return err
+	}
 
 	t.handshakeMessages.Write(data)
 

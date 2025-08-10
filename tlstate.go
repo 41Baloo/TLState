@@ -19,12 +19,16 @@ var (
 	ErrCipherNotImplemented        = errors.New("the selected cipher in Config is not implemented yet")
 	ErrClientFinishVerifyMissmatch = errors.New("client finished verify data and our verify data mismatch")
 
-	ErrInvalidX25519MLKEM768Keyshare = errors.New("invalid X25519MLKEM768 key share")
+	ErrUnexpectedMessage = errors.New("unexpected message")
 
-	ErrTLS13NotSupported       = errors.New("client does not support TLS 1.3")                      // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
-	ErrNamedGroupsNotSupported = errors.New("client does not support our given namedGroups/curves") // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
-	ErrCiphersNotSupported     = errors.New("client does not support our given ciphers")            // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
-	ErrSchemesNotSupported     = errors.New("client does not support our signature(s)")             // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrInvalidX25519MLKEM768Keyshare = errors.New("invalid X25519MLKEM768 key share")
+	ErrInvalidSessionId              = errors.New("invalid sessionId")
+	ErrInvalidKeyshareLength         = errors.New("invalid key share length")
+
+	ErrTLS13NotSupported       = errors.New("client does not support TLS 1.3")           // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
+	ErrNamedGroupsNotSupported = errors.New("client does not support our given curves")  // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrCiphersNotSupported     = errors.New("client does not support our given ciphers") // The clientHello did not suggest that the client supports TLS 1.3. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
+	ErrSchemesNotSupported     = errors.New("client does not support our signature(s)")  // The clientHello did not suggest that the client supports our signature(s). You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
 
 	ErrUnknownRecordType              = errors.New("unknown record type")
 	ErrApplicationDataDuringHandshake = errors.New("application data received during handshake")
@@ -35,10 +39,10 @@ var (
 type HandshakeState uint8
 
 const (
-	HandshakeStateInitial HandshakeState = iota
-	HandshakeStateClientHelloDone
-	HandshakeStateServerHelloDone
-	HandshakeStateWaitClientFinished
+	HandshakeStateInitial              HandshakeState = iota
+	HandshakeStateProcessedClientHello                // parsed ClientHello
+	HandshakeStateSentServerFlight                    // sent ServerHello
+	HandshakeStateWaitClientFinished                  // waiting for client
 	HandshakeStateDone
 )
 
@@ -189,7 +193,7 @@ func Put(t *TLState) {
 }
 
 func (t *TLState) SetConfig(config *Config) error {
-	if !config.initialised {
+	if config == nil || !config.initialised {
 		return ErrConfigNotInitialized
 	}
 
@@ -383,7 +387,7 @@ func (t *TLState) processApplicationData(out *byteBuffer.ByteBuffer) (ResponseSt
 
 		// See tls13.go:encryptApplicationData to understand this hack better
 		fLength := out.Len()
-		out.B = EnsureLen(out.B, fLength+cipherLength+t.handshakeCipher.Overhead())
+		out.B = EnsureLen(out.B, fLength+cipherLength+t.clientCipher.Overhead())
 
 		plaintext, err := t.clientCipher.Open(
 			out.B[fLength:fLength],
@@ -429,13 +433,30 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 // Data in buff will be whiped. Read encrypted data from buff after function call
 // buff.B may not be longer than 2^14
 func (t *TLState) encryptRecord(buff *byteBuffer.ByteBuffer, rType RecordType) error {
+
+	isApplicationPhase := t.handshakeState == HandshakeStateDone
+
+	var tCipher *cipher.AEAD
+	var key []byte
+	var iv []byte
+
+	if isApplicationPhase {
+		tCipher = &t.serverCipher
+		key = t.serverApplicationKey
+		iv = t.serverApplicationIV
+	} else {
+		tCipher = &t.handshakeCipher
+		key = t.serverHandshakeKey
+		iv = t.serverHandshakeIV
+	}
+
 	buff.WriteByte(byte(rType))
 
 	dataLength := buff.Len()
 
 	recordLength := dataLength + 16 // Add 16 for auth tag
 
-	buff.Write(t.serverApplicationIV)
+	buff.Write(iv)
 	nonce := buff.B[dataLength:]
 
 	buff.Write(marshallAdditionalData(recordLength))
@@ -449,22 +470,22 @@ func (t *TLState) encryptRecord(buff *byteBuffer.ByteBuffer, rType RecordType) e
 	}
 	t.serverRecordCount++
 
-	if t.serverCipher == nil {
-		aead, err := t.createAEAD(t.serverApplicationKey)
+	if *tCipher == nil {
+		aead, err := t.createAEAD(key)
 		if err != nil {
 			return err
 		}
 
-		t.serverCipher = aead
+		*tCipher = aead
 	}
 
 	// This is our final input length. .Seal will write the ciphertext into the remaining space of our buffer and if needed, expand it.
 	// This saves us having to use a second buffer and should also fully eliminate heap allocations caused by .Seal
 	fLength := buff.Len()
 	// We want at least current length + data length + overhead, so .Seal never has to allocate
-	buff.B = EnsureLen(buff.B, fLength+dataLength+t.serverCipher.Overhead())
+	buff.B = EnsureLen(buff.B, fLength+dataLength+(*tCipher).Overhead())
 
-	ciphertext := t.serverCipher.Seal(
+	ciphertext := (*tCipher).Seal(
 		buff.B[fLength:fLength],
 		nonce,
 		buff.B[:dataLength],

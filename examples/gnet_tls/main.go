@@ -65,6 +65,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 		c.Write(ctx.buff.B)
 	}
 	if err != nil {
+		log.Println(err.Error())
 		return gnet.Close
 	}
 
@@ -82,6 +83,7 @@ func (s *HTTPServer) OnTraffic(c gnet.Conn) gnet.Action {
 				c.Write(ctx.buff.B)
 			}
 
+			log.Println(err.Error())
 			return gnet.Close
 		}
 

@@ -105,3 +105,18 @@ func (n NamedGroup) String() string {
 		return "Invalid NamedGroup"
 	}
 }
+
+func (n NamedGroup) SizeBytes() int {
+	switch n {
+	case NamedGroupP256:
+		return 32
+	case NamedGroupP384:
+		return 48
+	case NamedGroupP521:
+		return 66
+	case NamedGroupX25519, NamedGroupX25519MLKEM768:
+		return X25519_PUBLIC_KEY_SIZE
+	default:
+		panic("unsupported named group")
+	}
+}

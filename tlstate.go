@@ -24,6 +24,7 @@ var (
 	ErrInvalidX25519MLKEM768Keyshare = errors.New("invalid X25519MLKEM768 key share")
 	ErrInvalidSessionId              = errors.New("invalid sessionId")
 	ErrInvalidKeyshareLength         = errors.New("invalid key share length")
+	ErrRecordCountTooLarge           = errors.New("record count too large") // Prevent record count overflowing
 
 	ErrTLS13NotSupported       = errors.New("client does not support TLS 1.3")           // The clientHello did not suggest the client supports TLS 1.3. As a special case, as long as the ResponseStatus is "Responded", you may still flush the buffer to the client, to alert them
 	ErrNamedGroupsNotSupported = errors.New("client does not support our given curves")  // The clientHello did not include a valid keyshare. You may still flush the buffer to the client, to alert them, if ResponseStatus is "Responded"
@@ -434,6 +435,10 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 // Data in buff will be whiped. Read encrypted data from buff after function call
 // buff.B may not be longer than 2^14
 func (t *TLState) encryptRecord(buff *byteBuffer.ByteBuffer, rType RecordType) error {
+
+	if t.serverRecordCount >= uint64(1)<<62 {
+		return ErrRecordCountTooLarge
+	}
 
 	isApplicationPhase := t.handshakeState == HandshakeStateDone
 

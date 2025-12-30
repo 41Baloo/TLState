@@ -436,7 +436,7 @@ func (t *TLState) encryptApplicationData(buff *byteBuffer.ByteBuffer) error {
 // buff.B may not be longer than 2^14
 func (t *TLState) encryptRecord(buff *byteBuffer.ByteBuffer, rType RecordType) error {
 
-	if t.serverRecordCount >= uint64(1)<<62 {
+	if t.serverRecordCount >= uint64(1)<<24 {
 		return ErrRecordCountTooLarge
 	}
 
